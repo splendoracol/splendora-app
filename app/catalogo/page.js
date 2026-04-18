@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 
-const CATEGORIES = ["Blusas","Pantalones","Vestidos","Faldas","Conjuntos","Accesorios","Zapatos","Bolsos","Otro"];
+const CATEGORIES_FALLBACK = ["Blusas","Pantalones","Vestidos","Faldas","Conjuntos","Accesorios","Zapatos","Bolsos","Otro"];
 const cur = (n) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(n || 0);
 
 // ── Photo viewer with arrows ──
@@ -191,15 +191,18 @@ export default function CatalogoPage() {
   const [selected, setSelected] = useState(null);
   const [cart, setCart] = useState([]);
   const [showCart, setShowCart] = useState(false);
+  const [categories, setCategories] = useState(CATEGORIES_FALLBACK);
 
   useEffect(() => {
     (async () => {
-      const [{ data: p }, { data: c }] = await Promise.all([
+      const [{ data: p }, { data: c }, { data: cats }] = await Promise.all([
         supabase.from('products').select('*').gt('stock', 0).order('created_at', { ascending: false }),
         supabase.from('catalog_config').select('*').eq('id', 1).single(),
+        supabase.from('categories').select('name').order('name'),
       ]);
       setProducts(p || []);
       setCfg(c || {});
+      if (cats && cats.length > 0) setCategories(cats.map(x => x.name));
       setLoading(false);
     })();
   }, []);
@@ -285,7 +288,7 @@ export default function CatalogoPage() {
       <div style={{ padding: '16px 16px 40px' }}>
         {/* CATEGORIES */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 16, overflowX: 'auto', paddingBottom: 4 }}>
-          {['Todas', ...CATEGORIES].map(c => (
+          {['Todas', ...categories].map(c => (
             <button key={c} onClick={() => setFilter(c)} style={{
               padding: '7px 16px', borderRadius: 20, fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
               fontFamily: "'Montserrat', sans-serif",

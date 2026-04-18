@@ -11,7 +11,7 @@ const TABS = [
   { id: 'tools', label: 'Más' },
 ];
 
-const CATEGORIES = ["Blusas", "Pantalones", "Vestidos", "Faldas", "Conjuntos", "Accesorios", "Zapatos", "Bolsos", "Otro"];
+const CATEGORIES_DEFAULT = ["Blusas", "Pantalones", "Vestidos", "Faldas", "Conjuntos", "Accesorios", "Zapatos", "Bolsos", "Otro"];
 const SIZES_LIST = ["XS", "S", "M", "L", "XL", "XXL", "Única"];
 const MONTHS = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
@@ -153,6 +153,8 @@ export default function HomePage() {
   const [search, setSearch] = useState('');
   const [fMonth, setFMonth] = useState(null);
   const [fYear, setFYear] = useState(new Date().getFullYear());
+  const [categories, setCategories] = useState(CATEGORIES_DEFAULT);
+  const [newCat, setNewCat] = useState('');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -168,17 +170,32 @@ export default function HomePage() {
   }, []);
 
   async function loadAll() {
-    const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }] = await Promise.all([
+    const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }, { data: cats }] = await Promise.all([
       supabase.from('products').select('*').order('created_at', { ascending: false }),
       supabase.from('orders').select('*').order('created_at', { ascending: false }),
       supabase.from('expenses').select('*').order('created_at', { ascending: false }),
       supabase.from('config').select('*').eq('id', 1).single(),
       supabase.from('catalog_config').select('*').eq('id', 1).single(),
+      supabase.from('categories').select('name').order('name'),
     ]);
     setProducts(p || []); setOrders(o || []); setExpenses(e || []);
     if (c) setConfig(c);
     if (cc) setCatCfg(cc);
+    if (cats && cats.length > 0) setCategories(cats.map(x => x.name));
     setLoading(false);
+  }
+
+  // Category CRUD
+  async function addCategory(name) {
+    if (!name.trim() || categories.includes(name.trim())) return;
+    await supabase.from('categories').insert({ name: name.trim() });
+    setNewCat('');
+    loadAll();
+  }
+  async function deleteCategory(name) {
+    if (!confirm(`¿Eliminar la categoría "${name}"? Los productos que la tengan NO se borran.`)) return;
+    await supabase.from('categories').delete().eq('name', name);
+    loadAll();
   }
 
   // CRUD
@@ -513,7 +530,7 @@ export default function HomePage() {
             )}
 
             <div style={{ display: 'flex', gap: 6, marginBottom: 14, overflowX: 'auto', paddingBottom: 4 }}>
-              {['Todas', ...CATEGORIES].map(c => (
+              {['Todas', ...categories].map(c => (
                 <button key={c} className="neu-btn neu-btn-sm" onClick={() => setCatFilter(c)}
                   style={{ whiteSpace: 'nowrap', fontSize: 10, ...(catFilter === c ? { boxShadow: 'var(--pressed)', color: '#4A6FA5', fontWeight: 800 } : {}) }}>
                   {c}
@@ -558,13 +575,38 @@ export default function HomePage() {
               </div>
               <button className="neu-btn" style={{ width: '100%' }} onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/catalogo`); alert('¡Link copiado!'); }}>📋 Copiar link</button>
             </div>
+
+            {/* CATEGORY MANAGEMENT */}
+            <div className="neu-card" style={{ marginBottom: 12 }}>
+              <div className="label">Categorías</div>
+              <p style={{ fontSize: 11, color: '#6B7280', marginBottom: 10 }}>Agrega o quita categorías para tus productos.</p>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                <input className="neu-input" value={newCat} onChange={e => setNewCat(e.target.value)} placeholder="Nueva categoría..." onKeyDown={e => { if (e.key === 'Enter') addCategory(newCat); }} />
+                <button className="neu-btn neu-btn-accent" onClick={() => addCategory(newCat)} style={{ padding: '10px 16px', flexShrink: 0 }}>+</button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {categories.map(c => (
+                  <div key={c} style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '6px 12px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+                    background: '#F0F2F5', boxShadow: 'var(--raised-sm)',
+                  }}>
+                    <span>{c}</span>
+                    <button onClick={() => deleteCategory(c)} style={{
+                      background: 'none', border: 'none', color: '#C0504E', cursor: 'pointer',
+                      fontSize: 14, padding: 0, lineHeight: 1, display: 'flex',
+                    }}>×</button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
 
       {/* ═══ MODALS ═══ */}
       <Modal open={showProd} onClose={() => setShowProd(false)} title={editProd ? 'Editar producto' : 'Nuevo producto'}>
-        <ProductForm initial={editProd} onSave={async p => { await saveProduct(p, editProd?.id); setShowProd(false); }} />
+        <ProductForm initial={editProd} categories={categories} onSave={async p => { await saveProduct(p, editProd?.id); setShowProd(false); }} />
       </Modal>
       <Modal open={showOrd} onClose={() => setShowOrd(false)} title="Nuevo pedido" wide>
         <OrderForm products={products} onSave={async o => { await saveOrder(o); setShowOrd(false); }} />
@@ -603,7 +645,7 @@ export default function HomePage() {
 // FORMS
 // ════════════════════════
 
-function ProductForm({ initial, onSave }) {
+function ProductForm({ initial, onSave, categories }) {
   const [f, setF] = useState(initial ? {
     name: initial.name, category: initial.category, size: initial.size,
     sizes: initial.sizes || [], color: initial.color || '',
@@ -684,7 +726,7 @@ function ProductForm({ initial, onSave }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Fld label="Categoría">
           <select className="neu-select" value={f.category} onChange={e => setF({ ...f, category: e.target.value })}>
-            {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+            {categories.map(c => <option key={c}>{c}</option>)}
           </select>
         </Fld>
         <Fld label="Color"><input className="neu-input" value={f.color} onChange={e => setF({ ...f, color: e.target.value })} placeholder="Negro, Blanco..." /></Fld>
