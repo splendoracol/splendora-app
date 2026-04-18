@@ -240,8 +240,16 @@ export default function HomePage() {
     const dist = nt - biz;
     const s1 = dist * 0.5;
     const s2 = dist * 0.5;
+    // Projected profit if all inventory sells
+    const projProfit = products.reduce((s, p) => s + ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0), 0);
+    const projBiz = projProfit * 0.10;
+    const projDist = projProfit - projBiz;
+    const projS1 = projDist * 0.5;
+    const projS2 = projDist * 0.5;
+
     return {
       ic, ir, dn, rv, cs, ex, nt, biz, s1, s2,
+      projProfit, projBiz, projS1, projS2,
       low: products.filter(p => p.stock > 0 && p.stock <= 2),
       out: products.filter(p => p.stock === 0),
       pnd: filteredOrders.filter(o => o.status === 'pending' || o.status === 'confirmed'),
@@ -315,6 +323,28 @@ export default function HomePage() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* Projected profit */}
+            <div className="neu-card" style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12 }}>📊 Si vendes todo el inventario</div>
+              <div className="neu-card neu-pressed" style={{ textAlign: 'center', padding: 12, marginBottom: 10 }}>
+                <div style={{ fontSize: 8, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>Ganancia total proyectada</div>
+                <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: m.projProfit >= 0 ? '#4A9E6B' : '#C0504E' }}>{cur(m.projProfit)}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[
+                  { n: 'SPLENDORA', p: '10%', v: m.projBiz, c: '#4A6FA5' },
+                  { n: config.partner1, p: '45%', v: m.projS1, c: '#1A1D23' },
+                  { n: config.partner2, p: '45%', v: m.projS2, c: '#1A1D23' },
+                ].map((x, i) => (
+                  <div key={i} style={{ flex: 1, textAlign: 'center', padding: 8, borderRadius: 10, background: '#F0F2F5' }}>
+                    <div style={{ fontSize: 7, color: '#6B7280' }}>{x.n}</div>
+                    <div style={{ fontSize: 12, fontWeight: 800, marginTop: 2, color: x.c }}>{cur(x.v)}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 8, color: '#9CA3AF', marginTop: 8, textAlign: 'center' }}>Basado en {products.reduce((s, p) => s + (p.stock || 0), 0)} unidades en inventario</div>
             </div>
 
             {/* Alerts */}
