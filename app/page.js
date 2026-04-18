@@ -51,7 +51,7 @@ function buildExcel(products, orders, expenses, config, month, year) {
   const biz = nt * 0.1, dist = nt - biz, s1 = dist * 0.5, s2 = dist * 0.5;
   const mk = (nm, h, rows) => `<Worksheet ss:Name="${nm}"><Table><Row>${h.map(x => `<Cell ss:StyleID="h"><Data ss:Type="String">${x}</Data></Cell>`).join('')}</Row>${rows}</Table></Worksheet>`;
   const period = month !== null ? `${MONTHS[month]} ${year}` : 'Todo';
-  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos')}${n(rv)}</Row><Row>${s('Costos')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA (10%)')}${n(biz)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo', 'Precio', 'Stock', 'Descuento'], products.map(p => `<Row>${s(p.code)}${s(p.name)}${s(p.category)}${s((p.sizes || []).join(', ') || p.size)}${s(p.color)}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(p.discount)}</Row>`).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Canal', 'Productos', 'Total', 'Costo', 'Estado'], fo.map(o => `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.channel)}${s((o.items || []).map(i => i.name + ' x' + i.qty).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}</Row>`).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
+  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos')}${n(rv)}</Row><Row>${s('Costos')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA (10%)')}${n(biz)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo', 'Precio', 'Stock', 'Descuento'], products.map(p => `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s(p.color)}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(p.discount)}</Row>`).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Canal', 'Productos', 'Total', 'Costo', 'Estado'], fo.map(o => `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.channel)}${s((o.items || []).map(i => i.name + ' x' + i.qty).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}</Row>`).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
 }
 
 function dlExcel(p, o, e, c, month, year) {
@@ -401,7 +401,7 @@ export default function HomePage() {
                   </div>
                   <div style={{ fontWeight: 700, fontSize: 13, marginTop: 2 }}>{p.name}</div>
                   <div style={{ fontSize: 10, color: '#6B7280' }}>
-                    {p.category} · {(p.sizes || []).join(', ') || p.size}{p.color ? ` · ${p.color}` : ''} · {cur(p.price)}
+                    {(p.categories || [p.category]).join(', ')} · {(p.sizes || []).join(', ') || p.size}{p.color ? ` · ${p.color}` : ''} · {cur(p.price)}
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, flexShrink: 0 }}>
@@ -539,7 +539,7 @@ export default function HomePage() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {products.filter(p => p.stock > 0 && (catFilter === 'Todas' || p.category === catFilter)).map(p => (
+              {products.filter(p => p.stock > 0 && (catFilter === 'Todas' || (p.categories || [p.category]).includes(catFilter))).map(p => (
                 <div key={p.id} className="neu-card" style={{ padding: 0, overflow: 'hidden' }}>
                   <div style={{ height: 120, boxShadow: 'var(--pressed)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', margin: 7, borderRadius: 10 }}>
                     {p.photo_url ? <img src={p.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10 }} /> : <span style={{ fontSize: 30, color: '#9CA3AF' }}>+</span>}
@@ -549,7 +549,7 @@ export default function HomePage() {
                     <div style={{ fontWeight: 700, fontSize: 12 }}>{p.name}</div>
                     <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4 }}>{p.hide_price ? 'Precio oculto' : cur(p.price)}</div>
                     <button className="neu-btn neu-btn-accent neu-btn-sm" style={{ width: '100%', marginTop: 8 }}
-                      onClick={() => { const wa = `✨ *${p.name}*\n🏷 ${p.code}\n📂 ${p.category} · ${(p.sizes || []).join(', ') || p.size}\n💰 ${cur(p.price)}\n🛍 SPLENDORA.COL`; navigator.clipboard?.writeText(wa); alert('¡Copiado!'); }}>
+                      onClick={() => { const wa = `✨ *${p.name}*\n🏷 ${p.code}\n📂 ${(p.categories || [p.category]).join(', ')} · ${(p.sizes || []).join(', ') || p.size}\n💰 ${cur(p.price)}\n🛍 SPLENDORA.COL`; navigator.clipboard?.writeText(wa); alert('¡Copiado!'); }}>
                       📋 Copiar WA
                     </button>
                   </div>
@@ -647,7 +647,9 @@ export default function HomePage() {
 
 function ProductForm({ initial, onSave, categories }) {
   const [f, setF] = useState(initial ? {
-    name: initial.name, category: initial.category, size: initial.size,
+    name: initial.name, category: initial.category,
+    productCategories: initial.categories || (initial.category ? [initial.category] : []),
+    size: initial.size,
     sizes: initial.sizes || [], color: initial.color || '',
     cost_product: initial.cost_product, cost_bag: initial.cost_bag,
     cost_shipping: initial.cost_shipping, price: initial.price, stock: initial.stock,
@@ -655,7 +657,7 @@ function ProductForm({ initial, onSave, categories }) {
     photo_url_2: initial.photo_url_2 || '',
     discount: initial.discount || 0, hide_price: initial.hide_price || false,
   } : {
-    name: '', category: 'Blusas', size: 'M', sizes: [], color: '',
+    name: '', category: 'Blusas', productCategories: [], size: 'M', sizes: [], color: '',
     cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 1,
     description: '', photo_url: '', photo_url_2: '', discount: 0, hide_price: false,
   });
@@ -723,14 +725,33 @@ function ProductForm({ initial, onSave, categories }) {
 
       <Fld label="Nombre"><input className="neu-input" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Ej: Blusa floral" /></Fld>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <Fld label="Categoría">
-          <select className="neu-select" value={f.category} onChange={e => setF({ ...f, category: e.target.value })}>
-            {categories.map(c => <option key={c}>{c}</option>)}
-          </select>
-        </Fld>
-        <Fld label="Color"><input className="neu-input" value={f.color} onChange={e => setF({ ...f, color: e.target.value })} placeholder="Negro, Blanco..." /></Fld>
+      {/* MULTIPLE CATEGORIES */}
+      <div style={{ marginBottom: 16 }}>
+        <label className="label">Categorías (selecciona una o varias)</label>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {categories.map(c => (
+            <button key={c} type="button" className="neu-btn neu-btn-sm"
+              onClick={() => setF(prev => ({
+                ...prev,
+                productCategories: prev.productCategories.includes(c)
+                  ? prev.productCategories.filter(x => x !== c)
+                  : [...prev.productCategories, c],
+                category: prev.productCategories.includes(c)
+                  ? (prev.productCategories.filter(x => x !== c)[0] || '')
+                  : c,
+              }))}
+              style={{
+                padding: '6px 14px',
+                ...(f.productCategories.includes(c) ? { background: '#4A6FA5', color: '#FFF', boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.2)' } : {}),
+              }}>
+              {c}
+            </button>
+          ))}
+        </div>
+        {f.productCategories.length === 0 && <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 6 }}>Selecciona al menos una categoría</div>}
       </div>
+
+      <Fld label="Color"><input className="neu-input" value={f.color} onChange={e => setF({ ...f, color: e.target.value })} placeholder="Negro, Blanco..." /></Fld>
 
       {/* MULTIPLE SIZES */}
       <div style={{ marginBottom: 16 }}>
@@ -788,7 +809,11 @@ function ProductForm({ initial, onSave, categories }) {
       <Fld label="Descripción (opc.)"><input className="neu-input" value={f.description} onChange={e => setF({ ...f, description: e.target.value })} placeholder="Material, detalles..." /></Fld>
 
       <button className="neu-btn neu-btn-accent" style={{ width: '100%' }}
-        onClick={() => { if (!f.name) return alert('Nombre requerido'); onSave({ ...f, cost_total: ct }); }}>
+        onClick={() => {
+          if (!f.name) return alert('Nombre requerido');
+          if (f.productCategories.length === 0) return alert('Selecciona al menos una categoría');
+          onSave({ ...f, cost_total: ct, categories: f.productCategories, category: f.productCategories[0] });
+        }}>
         {initial ? 'Guardar cambios' : 'Agregar producto'}
       </button>
     </div>

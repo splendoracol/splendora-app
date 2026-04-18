@@ -77,7 +77,7 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, selectedSiz
         <div style={{ padding: '12px 20px 20px' }}>
           <div style={{ fontSize: 9, color: '#4A6FA5', fontWeight: 700, letterSpacing: 0.5, marginBottom: 4 }}>{p.code}</div>
           <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>{p.name}</div>
-          <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>{p.category}</div>
+          <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>{(p.categories || [p.category]).join(' · ')}</div>
           {p.color && <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 6 }}>Color: {p.color}</div>}
           {p.description && <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 10, lineHeight: 1.5 }}>{p.description}</div>}
 
@@ -207,7 +207,7 @@ export default function CatalogoPage() {
     })();
   }, []);
 
-  const filtered = products.filter(p => filter === 'Todas' || p.category === filter);
+  const filtered = products.filter(p => filter === 'Todas' || (p.categories || [p.category]).includes(filter));
   const wa = cfg?.whatsapp_number || '573172346822';
   const ig = cfg?.instagram_url || 'https://www.instagram.com/splendora.col';
   const logo = cfg?.logo_url || '';
@@ -221,7 +221,7 @@ export default function CatalogoPage() {
     const disc = p.discount > 0;
     const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
     const pr = p.hide_price ? 'Consultar precio' : (disc ? `${cur(fp)} (antes ${cur(p.price)} - ${p.discount}% OFF)` : cur(p.price));
-    const msg = `Hola! Me interesa este producto de SPLENDORA.COL:\n\n*${p.name}*\nRef: ${p.code}\n${p.category}\nTalla: ${sz}\n${p.color ? `Color: ${p.color}\n` : ''}Precio: ${pr}\n${p.description || ''}\n${p.photo_url ? `\nFoto: ${p.photo_url}\n` : ''}\nEsta disponible?`;
+    const msg = `Hola! Me interesa este producto de SPLENDORA.COL:\n\n*${p.name}*\nRef: ${p.code}\n${(p.categories || [p.category]).join(', ')}\nTalla: ${sz}\n${p.color ? `Color: ${p.color}\n` : ''}Precio: ${pr}\n${p.description || ''}\n${p.photo_url ? `\nFoto: ${p.photo_url}\n` : ''}\nEsta disponible?`;
     window.open(`https://wa.me/${wa}?text=${encodeURIComponent(msg)}`, '_blank');
   }
 
@@ -327,7 +327,7 @@ export default function CatalogoPage() {
                   <div style={{ padding: '8px 14px 14px' }}>
                     <div style={{ fontSize: 8, color: '#4A6FA5', fontWeight: 700 }}>{p.code}</div>
                     <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{p.name}</div>
-                    <div style={{ fontSize: 9, color: '#6B7280' }}>{p.category}</div>
+                    <div style={{ fontSize: 9, color: '#6B7280' }}>{(p.categories || [p.category]).join(' · ')}</div>
                     {!p.hide_price ? (
                       <div style={{ marginTop: 4 }}>
                         {disc && <span style={{ fontSize: 10, color: '#9CA3AF', textDecoration: 'line-through', marginRight: 6 }}>{cur(p.price)}</span>}
