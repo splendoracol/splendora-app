@@ -201,13 +201,33 @@ export default function HomePage() {
 
   // CRUD
   async function saveProduct(prod, editId) {
+    // Clean prod to only include Supabase columns
+    const clean = {
+      name: prod.name,
+      category: prod.category || (prod.categories && prod.categories[0]) || 'Otro',
+      categories: prod.categories || prod.productCategories || [prod.category || 'Otro'],
+      size: prod.size || 'M',
+      sizes: prod.sizes || [],
+      color: prod.color || '',
+      cost_product: prod.cost_product || 0,
+      cost_bag: prod.cost_bag || 0,
+      cost_shipping: prod.cost_shipping || 0,
+      cost_total: prod.cost_total || 0,
+      price: prod.price || 0,
+      stock: prod.stock || 0,
+      description: prod.description || '',
+      photo_url: prod.photo_url || '',
+      photo_url_2: prod.photo_url_2 || '',
+      discount: prod.discount || 0,
+      hide_price: prod.hide_price || false,
+    };
     if (editId) {
-      await supabase.from('products').update(prod).eq('id', editId);
+      await supabase.from('products').update(clean).eq('id', editId);
     } else {
       const { data: cnt } = await supabase.from('counters').select('value').eq('id', 'product_code').single();
-      const code = genCode(prod.category, cnt?.value || 1);
+      const code = genCode(clean.categories[0] || clean.category, cnt?.value || 1);
       await supabase.from('counters').update({ value: (cnt?.value || 1) + 1 }).eq('id', 'product_code');
-      await supabase.from('products').insert({ ...prod, code });
+      await supabase.from('products').insert({ ...clean, code });
     }
     loadAll();
   }
