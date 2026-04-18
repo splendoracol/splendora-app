@@ -155,6 +155,7 @@ export default function HomePage() {
   const [fYear, setFYear] = useState(new Date().getFullYear());
   const [categories, setCategories] = useState(CATEGORIES_DEFAULT);
   const [newCat, setNewCat] = useState('');
+  const [showBulk, setShowBulk] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -385,7 +386,10 @@ export default function HomePage() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Inventario</h2>
-              <button className="neu-btn neu-btn-accent neu-btn-sm" onClick={() => { setEditProd(null); setShowProd(true); }}>+ Nuevo</button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button className="neu-btn neu-btn-sm" onClick={() => setShowBulk(true)}>📦 Masivo</button>
+                <button className="neu-btn neu-btn-accent neu-btn-sm" onClick={() => { setEditProd(null); setShowProd(true); }}>+ Nuevo</button>
+              </div>
             </div>
             <div className="neu-card neu-pressed" style={{ padding: 0, marginBottom: 12 }}>
               <input className="neu-input" placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ boxShadow: 'none', background: 'transparent' }} />
@@ -619,6 +623,18 @@ export default function HomePage() {
       </Modal>
       <Modal open={showCatCfg} onClose={() => setShowCatCfg(false)} title="Configurar catálogo">
         <CatCfgForm cfg={catCfg} onSave={saveCatCfg} />
+      </Modal>
+      <Modal open={showBulk} onClose={() => setShowBulk(false)} title="📦 Carga masiva de productos" wide>
+        <BulkForm categories={categories} onSave={async (items) => {
+          for (const prod of items) {
+            const { data: cnt } = await supabase.from('counters').select('value').eq('id', 'product_code').single();
+            const code = genCode(prod.category || prod.productCategories?.[0] || 'Otro', cnt?.value || 1);
+            await supabase.from('counters').update({ value: (cnt?.value || 1) + 1 }).eq('id', 'product_code');
+            await supabase.from('products').insert({ ...prod, code });
+          }
+          setShowBulk(false);
+          loadAll();
+        }} />
       </Modal>
 
       {/* NAV */}
@@ -987,6 +1003,132 @@ function CatCfgForm({ cfg, onSave }) {
       <Fld label="WhatsApp (con código país, sin +)"><input className="neu-input" value={c.whatsapp_number} onChange={e => setC({ ...c, whatsapp_number: e.target.value })} placeholder="573172346822" /></Fld>
 
       <button className="neu-btn neu-btn-accent" style={{ width: '100%' }} onClick={() => onSave(c)}>Guardar configuración</button>
+    </div>
+  );
+}
+
+function BulkForm({ categories, onSave }) {
+  const emptyRow = { name: '', category: categories[0] || 'Otro', productCategories: [], color: '', size: 'M', sizes: [], cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 1, description: '', photo_url: '', photo_url_2: '', discount: 0, hide_price: false };
+  const [rows, setRows] = useState([{ ...emptyRow }, { ...emptyRow }, { ...emptyRow }]);
+  const [saving, setSaving] = useState(false);
+
+  function updateRow(i, field, value) {
+    setRows(prev => prev.map((r, j) => j === i ? { ...r, [field]: value } : r));
+  }
+
+  function addRow() {
+    setRows(prev => [...prev, { ...emptyRow }]);
+  }
+
+  function removeRow(i) {
+    if (rows.length <= 1) return;
+    setRows(prev => prev.filter((_, j) => j !== i));
+  }
+
+  async function handleSave() {
+    const valid = rows.filter(r => r.name.trim());
+    if (valid.length === 0) return alert('Agrega al menos un producto con nombre');
+    setSaving(true);
+    const items = valid.map(r => ({
+      ...r,
+      cost_total: (Number(r.cost_product) || 0) + (Number(r.cost_bag) || 0) + (Number(r.cost_shipping) || 0),
+      categories: r.productCategories.length > 0 ? r.productCategories : [r.category],
+      category: r.productCategories.length > 0 ? r.productCategories[0] : r.category,
+    }));
+    await onSave(items);
+    setSaving(false);
+  }
+
+  return (
+    <div>
+      <p style={{ fontSize: 11, color: '#6B7280', marginBottom: 14 }}>
+        Llena los datos de cada producto. Solo los que tengan nombre se guardarán. Los campos de costos y fotos los puedes editar después.
+      </p>
+
+      {rows.map((r, i) => (
+        <div key={i} className="neu-card" style={{ padding: 14, marginBottom: 10, position: 'relative' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#4A6FA5' }}>Producto {i + 1}</div>
+            {rows.length > 1 && (
+              <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => removeRow(i)} style={{ padding: '2px 8px', fontSize: 10 }}>✕</button>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <div>
+              <label className="label">Nombre *</label>
+              <input className="neu-input" value={r.name} onChange={e => updateRow(i, 'name', e.target.value)} placeholder="Ej: Blusa floral" style={{ fontSize: 12 }} />
+            </div>
+            <div>
+              <label className="label">Color</label>
+              <input className="neu-input" value={r.color} onChange={e => updateRow(i, 'color', e.target.value)} placeholder="Negro..." style={{ fontSize: 12 }} />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <label className="label">Categorías</label>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {categories.map(c => (
+                <button key={c} type="button" onClick={() => {
+                  const cur = r.productCategories || [];
+                  updateRow(i, 'productCategories', cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c]);
+                }} style={{
+                  padding: '3px 10px', borderRadius: 6, fontSize: 9, fontWeight: 600, border: 'none', cursor: 'pointer',
+                  fontFamily: "'Montserrat', sans-serif",
+                  background: (r.productCategories || []).includes(c) ? '#4A6FA5' : '#F0F2F5',
+                  color: (r.productCategories || []).includes(c) ? '#FFF' : '#6B7280',
+                  boxShadow: (r.productCategories || []).includes(c) ? 'none' : 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF',
+                }}>{c}</button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6 }}>
+            <div>
+              <label className="label">Precio</label>
+              <input className="neu-input" type="number" value={r.price} onChange={e => updateRow(i, 'price', Number(e.target.value))} style={{ fontSize: 12 }} />
+            </div>
+            <div>
+              <label className="label">Costo</label>
+              <input className="neu-input" type="number" value={r.cost_product} onChange={e => updateRow(i, 'cost_product', Number(e.target.value))} style={{ fontSize: 12 }} />
+            </div>
+            <div>
+              <label className="label">Stock</label>
+              <input className="neu-input" type="number" value={r.stock} onChange={e => updateRow(i, 'stock', Number(e.target.value))} style={{ fontSize: 12 }} />
+            </div>
+            <div>
+              <label className="label">Desc. %</label>
+              <input className="neu-input" type="number" value={r.discount} onChange={e => updateRow(i, 'discount', Number(e.target.value))} style={{ fontSize: 12 }} />
+            </div>
+          </div>
+
+          <div style={{ marginTop: 8 }}>
+            <label className="label">Tallas</label>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {SIZES_LIST.map(s => (
+                <button key={s} type="button" onClick={() => {
+                  const cur = r.sizes || [];
+                  updateRow(i, 'sizes', cur.includes(s) ? cur.filter(x => x !== s) : [...cur, s]);
+                }} style={{
+                  padding: '3px 8px', borderRadius: 5, fontSize: 9, fontWeight: 600, border: 'none', cursor: 'pointer',
+                  fontFamily: "'Montserrat', sans-serif",
+                  background: (r.sizes || []).includes(s) ? '#4A6FA5' : '#F0F2F5',
+                  color: (r.sizes || []).includes(s) ? '#FFF' : '#6B7280',
+                  boxShadow: (r.sizes || []).includes(s) ? 'none' : 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF',
+                }}>{s}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <button className="neu-btn" style={{ width: '100%', marginBottom: 12 }} onClick={addRow}>
+        + Agregar otro producto
+      </button>
+
+      <button className="neu-btn neu-btn-accent" style={{ width: '100%' }} onClick={handleSave} disabled={saving}>
+        {saving ? 'Guardando...' : `📦 Guardar ${rows.filter(r => r.name.trim()).length} producto(s)`}
+      </button>
     </div>
   );
 }
