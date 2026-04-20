@@ -131,6 +131,80 @@ function MonthFilter({ month, year, onChange }) {
   );
 }
 
+// ── SALES CHART ──
+function SalesChart({ orders }) {
+  const year = new Date().getFullYear();
+  const monthlyData = useMemo(() => {
+    const data = MONTHS.map((name, i) => {
+      const monthOrders = orders.filter(o => {
+        const d = new Date(o.created_at);
+        return d.getMonth() === i && d.getFullYear() === year && o.status === 'delivered';
+      });
+      const revenue = monthOrders.reduce((s, o) => s + (o.total || 0), 0);
+      const cost = monthOrders.reduce((s, o) => s + (o.cost_total || 0), 0);
+      const count = monthOrders.length;
+      return { name: name.slice(0, 3), revenue, cost, profit: revenue - cost, count, month: i };
+    });
+    return data;
+  }, [orders, year]);
+
+  const maxVal = Math.max(...monthlyData.map(d => d.revenue), 1);
+  const currentMonth = new Date().getMonth();
+
+  return (
+    <div className="neu-card" style={{ padding: 16, marginBottom: 14 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 14 }}>
+        📊 Ventas por mes — {year}
+      </div>
+
+      {/* Bar chart */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 140, marginBottom: 8 }}>
+        {monthlyData.map((d, i) => {
+          const h = maxVal > 0 ? (d.revenue / maxVal) * 120 : 0;
+          const isCurrent = i === currentMonth;
+          return (
+            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+              {d.revenue > 0 && (
+                <div style={{ fontSize: 7, color: '#6B7280', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  {(d.revenue / 1000).toFixed(0)}k
+                </div>
+              )}
+              <div style={{
+                width: '100%', maxWidth: 24, height: Math.max(h, 3), borderRadius: '6px 6px 2px 2px',
+                background: isCurrent
+                  ? 'linear-gradient(180deg, #4A6FA5, #3A5A8A)'
+                  : d.revenue > 0 ? 'linear-gradient(180deg, #7B9ECF, #A8C4E0)' : '#E5E7EB',
+                boxShadow: d.revenue > 0 ? '2px 2px 4px #D1D3D6' : 'none',
+                transition: 'height 0.3s ease',
+              }} />
+              <div style={{
+                fontSize: 7, fontWeight: isCurrent ? 800 : 500,
+                color: isCurrent ? '#4A6FA5' : '#9CA3AF',
+              }}>
+                {d.name}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Summary row */}
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        {[
+          { l: 'Mejor mes', v: (() => { const best = [...monthlyData].sort((a, b) => b.revenue - a.revenue)[0]; return best.revenue > 0 ? `${best.name} (${cur(best.revenue)})` : '—'; })(), c: '#4A9E6B' },
+          { l: 'Total año', v: cur(monthlyData.reduce((s, d) => s + d.revenue, 0)), c: '#4A6FA5' },
+          { l: 'Pedidos año', v: monthlyData.reduce((s, d) => s + d.count, 0), c: '#1A1D23' },
+        ].map((x, i) => (
+          <div key={i} style={{ flex: 1, textAlign: 'center', padding: 8, borderRadius: 8, background: '#F0F2F5', boxShadow: 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF' }}>
+            <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{x.l}</div>
+            <div style={{ fontSize: 11, fontWeight: 800, marginTop: 2, color: x.c }}>{x.v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ════════════════════════
 // MAIN APP
 // ════════════════════════
@@ -515,6 +589,10 @@ export default function HomePage() {
                 ))}
               </div>
             </div>
+
+            {/* MONTHLY SALES CHART */}
+            <SalesChart orders={orders} />
+
             <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Gastos</div>
             {filteredExpenses.length === 0 ? (
               <div className="neu-card neu-pressed" style={{ textAlign: 'center', padding: 24, color: '#9CA3AF', fontSize: 12 }}>Sin gastos en este periodo</div>
