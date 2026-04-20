@@ -29,7 +29,7 @@ function PhotoNav({ photos, big }) {
 function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, selectedSize, onSizeChange, selectedColor, onColorChange }) {
   if (!product) return null;
   const p = product;
-  const photos = [p.photo_url, p.photo_url_2].filter(Boolean);
+  const photos = [p.photo_url, p.photo_url_2, ...(p.extra_photos || [])].filter(Boolean);
   const disc = p.discount > 0;
   const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
   const allSizes = p.sizes && p.sizes.length > 0 ? p.sizes : [p.size];
@@ -255,7 +255,7 @@ export default function CatalogoPage() {
             {filtered.map(p => {
               const disc = p.discount > 0;
               const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
-              const photos = [p.photo_url, p.photo_url_2].filter(Boolean);
+              const photos = [p.photo_url, p.photo_url_2, ...(p.extra_photos || [])].filter(Boolean);
               const allSizes = p.sizes && p.sizes.length > 0 ? p.sizes : [p.size];
               const allColors = p.colors && p.colors.length > 0 ? p.colors : (p.color ? [p.color] : []);
               const inCart = cart.find(x => x.id === p.id);
