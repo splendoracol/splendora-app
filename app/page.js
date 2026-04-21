@@ -23,7 +23,16 @@ const STATUS = {
   cancelled: { label: 'Cancelado', color: '#C0504E' },
 };
 
+const PAYMENT_STATUS = {
+  pending: { label: 'Pendiente', color: '#C0504E', bg: '#FEE2E2', icon: '○' },
+  partial: { label: 'Abono', color: '#D4A843', bg: '#FEF3C7', icon: '◐' },
+  paid: { label: 'Pagado', color: '#4A9E6B', bg: '#D1FAE5', icon: '●' },
+};
+
 const cur = (n) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(n || 0);
+
+// Normaliza un nombre de producto para comparación (sin espacios extra, sin mayúsculas)
+const normalizeName = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 function genCode(cat, idx) {
   const p = { Blusas: 'BL', Pantalones: 'PN', Vestidos: 'VS', Faldas: 'FL', Conjuntos: 'CJ', Accesorios: 'AC', Zapatos: 'ZP', Bolsos: 'BO', Otro: 'OT' };
@@ -43,15 +52,35 @@ function buildExcel(products, orders, expenses, config, month, year) {
   const s = v => `<Cell><Data ss:Type="String">${e(v)}</Data></Cell>`;
   const fo = month !== null ? orders.filter(o => { const d = new Date(o.created_at); return d.getMonth() === month && d.getFullYear() === year; }) : orders;
   const fe = month !== null ? expenses.filter(x => { const d = new Date(x.created_at); return d.getMonth() === month && d.getFullYear() === year; }) : expenses;
-  const done = fo.filter(o => o.status === 'delivered');
-  const rv = done.reduce((a, o) => a + (o.total || 0), 0);
-  const cs = done.reduce((a, o) => a + (o.cost_total || 0), 0);
+  const nonCanc = fo.filter(o => o.status !== 'cancelled');
+  // Ingresos = dinero realmente recibido (pagos completos + abonos parciales)
+  const rv = nonCanc.reduce((a, o) => {
+    const ps = o.payment_status || 'pending';
+    if (ps === 'paid') return a + (o.total || 0);
+    if (ps === 'partial') return a + (o.amount_paid || 0);
+    return a;
+  }, 0);
+  // Costos proporcionales al ingreso recibido (conserva margen real)
+  const cs = nonCanc.reduce((a, o) => {
+    const ps = o.payment_status || 'pending';
+    const total = o.total || 0;
+    const cost = o.cost_total || 0;
+    if (ps === 'paid') return a + cost;
+    if (ps === 'partial' && total > 0) return a + cost * ((o.amount_paid || 0) / total);
+    return a;
+  }, 0);
+  // Por cobrar (accounts receivable)
+  const pc = nonCanc.reduce((a, o) => {
+    const ps = o.payment_status || 'pending';
+    if (ps === 'paid') return a;
+    return a + Math.max(0, (o.total || 0) - (o.amount_paid || 0));
+  }, 0);
   const ex = fe.reduce((a, x) => a + (x.amount || 0), 0);
   const nt = rv - cs - ex;
   const biz = nt * 0.1, dist = nt - biz, s1 = dist * 0.5, s2 = dist * 0.5;
   const mk = (nm, h, rows) => `<Worksheet ss:Name="${nm}"><Table><Row>${h.map(x => `<Cell ss:StyleID="h"><Data ss:Type="String">${x}</Data></Cell>`).join('')}</Row>${rows}</Table></Worksheet>`;
   const period = month !== null ? `${MONTHS[month]} ${year}` : 'Todo';
-  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos')}${n(rv)}</Row><Row>${s('Costos')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA (10%)')}${n(biz)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo', 'Precio', 'Stock', 'Descuento'], products.map(p => `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(p.discount)}</Row>`).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Canal', 'Productos', 'Total', 'Costo', 'Estado'], fo.map(o => `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.channel)}${s((o.items || []).map(i => i.name + ' x' + i.qty).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}</Row>`).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
+  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos recibidos')}${n(rv)}</Row><Row>${s('Costos (productos vendidos)')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Por cobrar')}${n(pc)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA (10%)')}${n(biz)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo u.', 'Precio u.', 'Stock', 'Inversión (costo×stock)', 'Valor venta (precio×stock)', 'Ganancia proy. (×stock)', 'Descuento %'], products.map(p => { const inv = (p.cost_total || 0) * (p.stock || 0); const val = (p.price || 0) * (p.stock || 0); const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0); return `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(inv)}${n(val)}${n(gp)}${n(p.discount)}</Row>`; }).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Productos', 'Total', 'Costo', 'Estado entrega', 'Estado pago', 'Abonado', 'Por cobrar', 'Notas pago'], fo.map(o => { const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0)); const ps = o.payment_status || 'pending'; return `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.city || '')}${s(o.channel)}${s((o.items || []).map(i => `${i.name} x${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}${s(PAYMENT_STATUS[ps]?.label || ps)}${n(o.amount_paid)}${n(ps === 'paid' ? 0 : due)}${s(o.payment_notes || '')}</Row>`; }).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
 }
 
 function dlExcel(p, o, e, c, month, year) {
@@ -132,17 +161,23 @@ function MonthFilter({ month, year, onChange }) {
 }
 
 // ── SALES CHART ──
+// Muestra dinero realmente recibido por mes (pagos completos + abonos parciales)
 function SalesChart({ orders }) {
   const year = new Date().getFullYear();
   const monthlyData = useMemo(() => {
     const data = MONTHS.map((name, i) => {
       const monthOrders = orders.filter(o => {
         const d = new Date(o.created_at);
-        return d.getMonth() === i && d.getFullYear() === year && o.status === 'delivered';
+        return d.getMonth() === i && d.getFullYear() === year && o.status !== 'cancelled';
       });
-      const revenue = monthOrders.reduce((s, o) => s + (o.total || 0), 0);
-      const cost = monthOrders.reduce((s, o) => s + (o.cost_total || 0), 0);
-      const count = monthOrders.length;
+      let revenue = 0, cost = 0, count = 0;
+      monthOrders.forEach(o => {
+        const ps = o.payment_status || 'pending';
+        const total = o.total || 0;
+        const c = o.cost_total || 0;
+        if (ps === 'paid') { revenue += total; cost += c; count++; }
+        else if (ps === 'partial') { revenue += (o.amount_paid || 0); if (total > 0) cost += c * ((o.amount_paid || 0) / total); count++; }
+      });
       return { name: name.slice(0, 3), revenue, cost, profit: revenue - cost, count, month: i };
     });
     return data;
@@ -154,7 +189,7 @@ function SalesChart({ orders }) {
   return (
     <div className="neu-card" style={{ padding: 16, marginBottom: 14 }}>
       <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 14 }}>
-        📊 Ventas por mes — {year}
+        📊 Dinero recibido por mes — {year}
       </div>
 
       {/* Bar chart */}
@@ -277,7 +312,7 @@ export default function HomePage() {
   async function saveProduct(prod, editId) {
     // Clean prod to only include Supabase columns
     const clean = {
-      name: prod.name,
+      name: (prod.name || '').trim(),
       category: prod.category || (prod.categories && prod.categories[0]) || 'Otro',
       categories: prod.categories || prod.productCategories || [prod.category || 'Otro'],
       size: prod.size || 'M',
@@ -297,15 +332,24 @@ export default function HomePage() {
       discount: prod.discount || 0,
       hide_price: prod.hide_price || false,
     };
-    if (editId) {
-      await supabase.from('products').update(clean).eq('id', editId);
-    } else {
-      const { data: cnt } = await supabase.from('counters').select('value').eq('id', 'product_code').single();
-      const code = genCode(clean.categories[0] || clean.category, cnt?.value || 1);
-      await supabase.from('counters').update({ value: (cnt?.value || 1) + 1 }).eq('id', 'product_code');
-      await supabase.from('products').insert({ ...clean, code });
+    try {
+      if (editId) {
+        const { error } = await supabase.from('products').update(clean).eq('id', editId);
+        if (error) throw error;
+      } else {
+        const { data: cnt } = await supabase.from('counters').select('value').eq('id', 'product_code').single();
+        const code = genCode(clean.categories[0] || clean.category, cnt?.value || 1);
+        const { error } = await supabase.from('products').insert({ ...clean, code });
+        if (error) throw error;
+        await supabase.from('counters').update({ value: (cnt?.value || 1) + 1 }).eq('id', 'product_code');
+      }
+      await loadAll();
+      return { ok: true };
+    } catch (err) {
+      // 23505 = unique violation en Postgres
+      const isDup = err?.code === '23505' || /duplicate|unique/i.test(err?.message || '');
+      return { ok: false, error: isDup ? `Ya existe un producto con el nombre "${clean.name}"` : (err?.message || 'Error al guardar') };
     }
-    loadAll();
   }
   async function deleteProduct(id) { await supabase.from('products').delete().eq('id', id); loadAll(); }
   async function saveOrder(ord) { await supabase.from('orders').insert(ord); loadAll(); }
@@ -317,6 +361,13 @@ export default function HomePage() {
         if (p) await supabase.from('products').update({ stock: Math.max(0, p.stock - it.qty) }).eq('id', p.id);
       }
     }
+    loadAll();
+  }
+  async function updatePayment(id, payment_status, amount_paid, payment_notes) {
+    const patch = { payment_status };
+    if (amount_paid !== undefined) patch.amount_paid = amount_paid;
+    if (payment_notes !== undefined) patch.payment_notes = payment_notes;
+    await supabase.from('orders').update(patch).eq('id', id);
     loadAll();
   }
   async function saveExpense(exp) { await supabase.from('expenses').insert(exp); loadAll(); }
@@ -343,18 +394,51 @@ export default function HomePage() {
 
   // Metrics
   const m = useMemo(() => {
+    // Inversión actual en inventario = Σ(costo_unitario × stock)
     const ic = products.reduce((s, p) => s + (p.cost_total || 0) * (p.stock || 0), 0);
+    // Valor del inventario al precio de venta = Σ(precio × stock)
     const ir = products.reduce((s, p) => s + (p.price || 0) * (p.stock || 0), 0);
-    const dn = filteredOrders.filter(o => o.status === 'delivered');
-    const rv = dn.reduce((s, o) => s + (o.total || 0), 0);
-    const cs = dn.reduce((s, o) => s + (o.cost_total || 0), 0);
+
+    // Pedidos no cancelados del periodo
+    const nonCanc = filteredOrders.filter(o => o.status !== 'cancelled');
+    const dn = nonCanc.filter(o => o.status === 'delivered');
+
+    // ── CONTABILIDAD EN EFECTIVO (lo que realmente entró) ──
+    // Ingresos = pagos completos + abonos parciales recibidos
+    const rv = nonCanc.reduce((s, o) => {
+      const ps = o.payment_status || 'pending';
+      if (ps === 'paid') return s + (o.total || 0);
+      if (ps === 'partial') return s + (o.amount_paid || 0);
+      return s;
+    }, 0);
+    // Costos proporcionales al ingreso recibido (así el margen es real)
+    const cs = nonCanc.reduce((s, o) => {
+      const ps = o.payment_status || 'pending';
+      const total = o.total || 0;
+      const cost = o.cost_total || 0;
+      if (ps === 'paid') return s + cost;
+      if (ps === 'partial' && total > 0) return s + cost * ((o.amount_paid || 0) / total);
+      return s;
+    }, 0);
+    // Por cobrar (saldo pendiente de clientes)
+    const pc = nonCanc.reduce((s, o) => {
+      const ps = o.payment_status || 'pending';
+      if (ps === 'paid') return s;
+      return s + Math.max(0, (o.total || 0) - (o.amount_paid || 0));
+    }, 0);
+    const paidOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'paid').length;
+    const partialOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'partial').length;
+    const pendingPayOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'pending').length;
+
     const ex = filteredExpenses.reduce((s, e) => s + (e.amount || 0), 0);
     const nt = rv - cs - ex;
     const biz = nt * 0.10;
     const dist = nt - biz;
     const s1 = dist * 0.5;
     const s2 = dist * 0.5;
-    // Projected profit if all inventory sells
+
+    // Ganancia proyectada si se vende TODO el inventario actual
+    // = Σ((precio - costo) × stock)
     const projProfit = products.reduce((s, p) => s + ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0), 0);
     const projBiz = projProfit * 0.10;
     const projDist = projProfit - projBiz;
@@ -362,7 +446,8 @@ export default function HomePage() {
     const projS2 = projDist * 0.5;
 
     return {
-      ic, ir, dn, rv, cs, ex, nt, biz, s1, s2,
+      ic, ir, dn, rv, cs, ex, nt, biz, s1, s2, pc,
+      paidOrders, partialOrders, pendingPayOrders,
       projProfit, projBiz, projS1, projS2,
       totalUnits: products.reduce((s, p) => s + (p.stock || 0), 0),
       low: products.filter(p => p.stock > 0 && p.stock <= 2),
@@ -412,8 +497,10 @@ export default function HomePage() {
               {[
                 { l: 'Productos', v: products.length, s: `${m.totalUnits} unidades · ${m.out.length} agotados` },
                 { l: 'Pedidos pend.', v: m.pnd.length, s: `${m.dn.length} entregados`, c: '#4A6FA5' },
-                { l: 'Inversión', v: cur(m.ic), s: `Valor: ${cur(m.ir)}`, c: '#4A6FA5' },
-                { l: 'Ganancia', v: cur(m.nt), s: `SPLENDORA: ${cur(m.biz)}`, c: m.nt >= 0 ? '#4A9E6B' : '#C0504E' },
+                { l: 'Inversión inventario', v: cur(m.ic), s: `${m.totalUnits} und · Valor venta: ${cur(m.ir)}`, c: '#4A6FA5' },
+                { l: 'Por cobrar', v: cur(m.pc), s: `${m.partialOrders} abono · ${m.pendingPayOrders} pend.`, c: m.pc > 0 ? '#D4A843' : '#9CA3AF' },
+                { l: 'Ingresos recibidos', v: cur(m.rv), s: `${m.paidOrders} pagados · ${m.partialOrders} abono`, c: '#4A9E6B' },
+                { l: 'Ganancia neta', v: cur(m.nt), s: `SPLENDORA: ${cur(m.biz)}`, c: m.nt >= 0 ? '#4A9E6B' : '#C0504E' },
               ].map((x, i) => (
                 <div key={i} className="neu-card" style={{ padding: 14 }}>
                   <div style={{ fontSize: 9, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 700, marginBottom: 7 }}>{x.l}</div>
@@ -488,10 +575,34 @@ export default function HomePage() {
                 <button className="neu-btn neu-btn-accent neu-btn-sm" onClick={() => { setEditProd(null); setShowProd(true); }}>+ Nuevo</button>
               </div>
             </div>
+
+            {/* Totales de inventario */}
+            <div className="neu-card" style={{ padding: 12, marginBottom: 12 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Totales del inventario</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Unidades</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, marginTop: 2 }}>{m.totalUnits}</div>
+                </div>
+                <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Inversión</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2, color: '#4A6FA5' }}>{cur(m.ic)}</div>
+                </div>
+                <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Valor venta</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2, color: '#4A9E6B' }}>{cur(m.ir)}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 6, textAlign: 'center' }}>Ganancia potencial: <b style={{ color: '#4A9E6B' }}>{cur(m.projProfit)}</b> si se vende todo</div>
+            </div>
+
             <div className="neu-card neu-pressed" style={{ padding: 0, marginBottom: 12 }}>
               <input className="neu-input" placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ boxShadow: 'none', background: 'transparent' }} />
             </div>
-            {products.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.code || '').toLowerCase().includes(search.toLowerCase())).map(p => (
+            {products.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.code || '').toLowerCase().includes(search.toLowerCase())).map(p => {
+              const inv = (p.cost_total || 0) * (p.stock || 0);
+              const val = (p.price || 0) * (p.stock || 0);
+              return (
               <div key={p.id} className="neu-card" style={{ padding: 12, display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
                 <Thumb src={p.photo_url} size={50} />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -504,6 +615,9 @@ export default function HomePage() {
                   <div style={{ fontSize: 10, color: '#6B7280' }}>
                     {(p.categories || [p.category]).join(', ')} · {(p.sizes || []).join(', ') || p.size}{(p.colors && p.colors.length > 0) ? ` · ${p.colors.join(', ')}` : p.color ? ` · ${p.color}` : ''} · {cur(p.price)}
                   </div>
+                  <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 3 }}>
+                    Inv: <b style={{ color: '#4A6FA5' }}>{cur(inv)}</b> · Venta: <b style={{ color: '#4A9E6B' }}>{cur(val)}</b>
+                  </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, flexShrink: 0 }}>
                   <div className="neu-card neu-pressed" style={{ padding: '3px 10px', borderRadius: 8 }}>
@@ -515,7 +629,7 @@ export default function HomePage() {
                   </div>
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         )}
 
@@ -527,33 +641,97 @@ export default function HomePage() {
               <button className="neu-btn neu-btn-accent neu-btn-sm" onClick={() => setShowOrd(true)}>+ Nuevo</button>
             </div>
             <MonthFilter month={fMonth} year={fYear} onChange={(mm, y) => { setFMonth(mm); setFYear(y); }} />
+
+            {/* Resumen de pagos del periodo */}
+            <div className="neu-card" style={{ padding: 10, marginBottom: 10 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                <div style={{ textAlign: 'center', padding: 6, borderRadius: 8, background: '#D1FAE5' }}>
+                  <div style={{ fontSize: 7, color: '#4A9E6B', fontWeight: 700, textTransform: 'uppercase' }}>Cobrado</div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: '#4A9E6B', marginTop: 2 }}>{cur(m.rv)}</div>
+                </div>
+                <div style={{ textAlign: 'center', padding: 6, borderRadius: 8, background: '#FEF3C7' }}>
+                  <div style={{ fontSize: 7, color: '#D4A843', fontWeight: 700, textTransform: 'uppercase' }}>Por cobrar</div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: '#D4A843', marginTop: 2 }}>{cur(m.pc)}</div>
+                </div>
+                <div style={{ textAlign: 'center', padding: 6, borderRadius: 8, background: '#F0F2F5', boxShadow: 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF' }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase' }}>Pedidos</div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginTop: 2 }}>{filteredOrders.length}</div>
+                </div>
+              </div>
+            </div>
+
             {filteredOrders.length === 0 ? (
               <div className="neu-card" style={{ textAlign: 'center', padding: 32, color: '#9CA3AF' }}>Sin pedidos en este periodo</div>
-            ) : filteredOrders.map(o => (
+            ) : filteredOrders.map(o => {
+              const ps = o.payment_status || 'pending';
+              const psCfg = PAYMENT_STATUS[ps];
+              const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0));
+              return (
               <div key={o.id} className="neu-card" style={{ padding: 14, marginBottom: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{o.customer_name}</div>
-                    <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>{(o.items || []).map(i => `${i.name} ×${i.qty}`).join(', ')}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{o.customer_name}{o.city ? <span style={{ fontSize: 10, color: '#6B7280', fontWeight: 500 }}> · 📍 {o.city}</span> : null}</div>
+                    <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>{(o.items || []).map(i => `${i.name} ×${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', ')}</div>
                     <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 2 }}>{o.channel} · {new Date(o.created_at).toLocaleDateString('es-CO')}</div>
+                    {o.payment_notes && <div style={{ fontSize: 9, color: '#6B7280', marginTop: 3, fontStyle: 'italic' }}>📝 {o.payment_notes}</div>}
                   </div>
-                  <div style={{ textAlign: 'right' }}>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontSize: 16, fontWeight: 800 }}>{cur(o.total)}</div>
-                    <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 6, marginTop: 3, fontSize: 9, fontWeight: 700, color: STATUS[o.status]?.color, boxShadow: 'var(--pressed)' }}>{STATUS[o.status]?.label}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 3, alignItems: 'flex-end' }}>
+                      <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, color: STATUS[o.status]?.color, boxShadow: 'var(--pressed)' }}>{STATUS[o.status]?.label}</span>
+                      <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, color: psCfg.color, background: psCfg.bg }}>
+                        {psCfg.icon} {psCfg.label}
+                      </span>
+                    </div>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 5, marginTop: 10, flexWrap: 'wrap' }}>
+
+                {/* Línea de pago */}
+                {ps !== 'paid' && o.status !== 'cancelled' && (
+                  <div className="neu-card neu-pressed" style={{ padding: 8, marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+                    <span>Abonado: <b style={{ color: '#4A9E6B' }}>{cur(o.amount_paid || 0)}</b></span>
+                    <span>Por cobrar: <b style={{ color: '#C0504E' }}>{cur(due)}</b></span>
+                  </div>
+                )}
+
+                {/* Botones de estado de entrega */}
+                <div style={{ display: 'flex', gap: 4, marginTop: 10, flexWrap: 'wrap' }}>
                   {Object.entries(STATUS).filter(([k]) => k !== 'cancelled').map(([k, v]) => (
                     <button key={k} className="neu-btn neu-btn-sm" onClick={() => updateOrderStatus(o.id, k, o.items, o.status)}
-                      style={{ padding: '4px 9px', fontSize: 9, ...(o.status === k ? { boxShadow: 'var(--pressed)', color: v.color, fontWeight: 800 } : {}) }}>
+                      style={{ padding: '3px 7px', fontSize: 9, ...(o.status === k ? { boxShadow: 'var(--pressed)', color: v.color, fontWeight: 800 } : {}) }}>
                       {v.label}
                     </button>
                   ))}
-                  <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => updateOrderStatus(o.id, 'cancelled', o.items, o.status)}
-                    style={{ padding: '4px 9px', fontSize: 9, marginLeft: 'auto' }}>Cancelar</button>
+                  <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => { if (confirm('¿Cancelar este pedido?')) updateOrderStatus(o.id, 'cancelled', o.items, o.status); }}
+                    style={{ padding: '3px 7px', fontSize: 9, marginLeft: 'auto' }}>Cancelar</button>
+                </div>
+
+                {/* Botones de estado de pago */}
+                <div style={{ display: 'flex', gap: 4, marginTop: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: 9, color: '#6B7280', fontWeight: 700, marginRight: 4 }}>PAGO:</span>
+                  <button className="neu-btn neu-btn-sm" onClick={() => updatePayment(o.id, 'pending', 0)}
+                    style={{ padding: '3px 8px', fontSize: 9, ...(ps === 'pending' ? { boxShadow: 'var(--pressed)', color: PAYMENT_STATUS.pending.color, fontWeight: 800 } : {}) }}>
+                    ○ Pendiente
+                  </button>
+                  <button className="neu-btn neu-btn-sm" onClick={() => {
+                    const current = o.amount_paid || 0;
+                    const s = prompt(`Abono TOTAL acumulado de la clienta\n(Total del pedido: ${cur(o.total)})\n${current > 0 ? `Ya tenía abonado: ${cur(current)}` : ''}`, String(current));
+                    if (s === null) return;
+                    const n = Number(s);
+                    if (isNaN(n) || n < 0) { alert('Monto inválido'); return; }
+                    if (n >= (o.total || 0)) { updatePayment(o.id, 'paid', o.total); return; }
+                    updatePayment(o.id, 'partial', n);
+                  }}
+                    style={{ padding: '3px 8px', fontSize: 9, ...(ps === 'partial' ? { boxShadow: 'var(--pressed)', color: PAYMENT_STATUS.partial.color, fontWeight: 800 } : {}) }}>
+                    ◐ Abono
+                  </button>
+                  <button className="neu-btn neu-btn-sm" onClick={() => updatePayment(o.id, 'paid', o.total)}
+                    style={{ padding: '3px 8px', fontSize: 9, ...(ps === 'paid' ? { boxShadow: 'var(--pressed)', color: PAYMENT_STATUS.paid.color, fontWeight: 800 } : {}) }}>
+                    ● Pagado
+                  </button>
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         )}
 
@@ -568,8 +746,8 @@ export default function HomePage() {
             <div className="neu-card" style={{ padding: 18, marginBottom: 14 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 {[
-                  { l: 'Ingresos', v: m.rv, c: '#4A9E6B' },
-                  { l: 'Costos', v: m.cs },
+                  { l: 'Ingresos recibidos', v: m.rv, c: '#4A9E6B' },
+                  { l: 'Costos productos', v: m.cs },
                   { l: 'Gastos', v: m.ex, c: '#D4A843' },
                   { l: 'Ganancia neta', v: m.nt, c: m.nt >= 0 ? '#4A9E6B' : '#C0504E' },
                 ].map((r, i) => (
@@ -579,6 +757,18 @@ export default function HomePage() {
                   </div>
                 ))}
               </div>
+
+              {/* Por cobrar destacado */}
+              {m.pc > 0 && (
+                <div style={{ marginTop: 12, padding: 10, borderRadius: 10, background: '#FEF3C7', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 8, color: '#D4A843', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>⚠ Por cobrar</div>
+                    <div style={{ fontSize: 9, color: '#6B7280', marginTop: 2 }}>{m.partialOrders} con abono · {m.pendingPayOrders} sin pagar</div>
+                  </div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: '#D4A843' }}>{cur(m.pc)}</div>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
                 {[
                   { n: 'SPLENDORA', p: '10%', v: m.biz, c: '#4A6FA5' },
@@ -590,6 +780,9 @@ export default function HomePage() {
                     <div style={{ fontSize: 13, fontWeight: 800, marginTop: 3, color: x.c || '#4A6FA5' }}>{cur(x.v)}</div>
                   </div>
                 ))}
+              </div>
+              <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, textAlign: 'center', fontStyle: 'italic' }}>
+                * Los ingresos solo cuentan pagos recibidos (pagados completos + abonos)
               </div>
             </div>
 
@@ -711,7 +904,12 @@ export default function HomePage() {
 
       {/* ═══ MODALS ═══ */}
       <Modal open={showProd} onClose={() => setShowProd(false)} title={editProd ? 'Editar producto' : 'Nuevo producto'}>
-        <ProductForm initial={editProd} categories={categories} onSave={async p => { await saveProduct(p, editProd?.id); setShowProd(false); }} />
+        <ProductForm initial={editProd} categories={categories} existingProducts={products} editingId={editProd?.id}
+          onSave={async p => {
+            const res = await saveProduct(p, editProd?.id);
+            if (res.ok) setShowProd(false);
+            else alert('❌ ' + res.error);
+          }} />
       </Modal>
       <Modal open={showOrd} onClose={() => setShowOrd(false)} title="Nuevo pedido" wide>
         <OrderForm products={products} onSave={async o => { await saveOrder(o); setShowOrd(false); }} />
@@ -726,12 +924,21 @@ export default function HomePage() {
         <CatCfgForm cfg={catCfg} onSave={saveCatCfg} />
       </Modal>
       <Modal open={showBulk} onClose={() => setShowBulk(false)} title="📦 Carga masiva de productos" wide>
-        <BulkForm categories={categories} onSave={async (items) => {
+        <BulkForm categories={categories} existingProducts={products} onSave={async (items) => {
+          const errors = [];
           for (const prod of items) {
-            const { data: cnt } = await supabase.from('counters').select('value').eq('id', 'product_code').single();
-            const code = genCode(prod.category || prod.productCategories?.[0] || 'Otro', cnt?.value || 1);
-            await supabase.from('counters').update({ value: (cnt?.value || 1) + 1 }).eq('id', 'product_code');
-            await supabase.from('products').insert({ ...prod, code });
+            try {
+              const { data: cnt } = await supabase.from('counters').select('value').eq('id', 'product_code').single();
+              const code = genCode(prod.category || prod.productCategories?.[0] || 'Otro', cnt?.value || 1);
+              const { error } = await supabase.from('products').insert({ ...prod, code });
+              if (error) throw error;
+              await supabase.from('counters').update({ value: (cnt?.value || 1) + 1 }).eq('id', 'product_code');
+            } catch (err) {
+              errors.push(`"${prod.name}": ${/duplicate|unique/i.test(err?.message || '') ? 'nombre duplicado' : (err?.message || 'error')}`);
+            }
+          }
+          if (errors.length > 0) {
+            alert(`❌ No se guardaron ${errors.length} producto(s):\n\n${errors.join('\n')}\n\nLos demás se guardaron correctamente.`);
           }
           setShowBulk(false);
           loadAll();
@@ -762,7 +969,7 @@ export default function HomePage() {
 // FORMS
 // ════════════════════════
 
-function ProductForm({ initial, onSave, categories }) {
+function ProductForm({ initial, onSave, categories, existingProducts = [], editingId }) {
   const [f, setF] = useState(initial ? {
     name: initial.name, category: initial.category,
     productCategories: initial.categories || (initial.category ? [initial.category] : []),
@@ -780,6 +987,11 @@ function ProductForm({ initial, onSave, categories }) {
     cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 1,
     description: '', photo_url: '', photo_url_2: '', extra_photos: [], discount: 0, hide_price: false,
   });
+
+  // Detección de nombre duplicado (case-insensitive, ignora espacios)
+  const normalizedName = normalizeName(f.name);
+  const duplicate = normalizedName ? existingProducts.find(p => p.id !== editingId && normalizeName(p.name) === normalizedName) : null;
+  const isDuplicate = !!duplicate;
 
   const [uploading, setUploading] = useState(false);
   const ref1 = useRef(null);
@@ -871,7 +1083,21 @@ function ProductForm({ initial, onSave, categories }) {
         </button>
       </div>
 
-      <Fld label="Nombre"><input className="neu-input" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Ej: Blusa floral" /></Fld>
+      <div style={{ marginBottom: 16 }}>
+        <label className="label">Nombre {isDuplicate && <span style={{ color: '#C0504E', fontSize: 9, marginLeft: 6, textTransform: 'none', letterSpacing: 0 }}>⚠ Ya existe</span>}</label>
+        <input
+          className="neu-input"
+          value={f.name}
+          onChange={e => setF({ ...f, name: e.target.value })}
+          placeholder="Ej: Blusa floral"
+          style={isDuplicate ? { boxShadow: 'inset 0 0 0 2px #C0504E, inset 3px 3px 6px #FCA5A5, inset -3px -3px 6px #FEE2E2', color: '#C0504E' } : {}}
+        />
+        {isDuplicate && (
+          <div style={{ fontSize: 10, color: '#C0504E', marginTop: 6, padding: '6px 10px', background: '#FEE2E2', borderRadius: 8 }}>
+            Ya existe un producto con este nombre: <b>{duplicate.code}</b> — cambia el nombre para evitar duplicados en el inventario.
+          </div>
+        )}
+      </div>
 
       {/* MULTIPLE CATEGORIES */}
       <div style={{ marginBottom: 16 }}>
@@ -993,9 +1219,11 @@ function ProductForm({ initial, onSave, categories }) {
 
       <Fld label="Descripción (opc.)"><input className="neu-input" value={f.description} onChange={e => setF({ ...f, description: e.target.value })} placeholder="Material, detalles..." /></Fld>
 
-      <button className="neu-btn neu-btn-accent" style={{ width: '100%' }}
+      <button className="neu-btn neu-btn-accent" style={{ width: '100%', ...(isDuplicate ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+        disabled={isDuplicate}
         onClick={() => {
           if (!f.name) return alert('Nombre requerido');
+          if (isDuplicate) return alert('Ya existe un producto con ese nombre. Cambia el nombre antes de guardar.');
           if (f.productCategories.length === 0) return alert('Selecciona al menos una categoría');
           onSave({ ...f, cost_total: ct, categories: f.productCategories, category: f.productCategories[0] });
         }}>
@@ -1006,56 +1234,178 @@ function ProductForm({ initial, onSave, categories }) {
 }
 
 function OrderForm({ products, onSave }) {
-  const [f, setF] = useState({ customer_name: '', channel: 'WhatsApp', shipping_charge: 0, items: [] });
+  const [f, setF] = useState({
+    customer_name: '', city: '', channel: 'WhatsApp', shipping_charge: 0, items: [],
+    payment_status: 'pending', amount_paid: 0, payment_notes: '',
+  });
   const [sel, setSel] = useState('');
   const [qty, setQty] = useState(1);
+  const [selSize, setSelSize] = useState('');
+  const [selColor, setSelColor] = useState('');
   const av = products.filter(p => p.stock > 0);
+  const selProd = av.find(p => p.id === sel);
+  const selProdSizes = selProd ? (selProd.sizes && selProd.sizes.length > 0 ? selProd.sizes : (selProd.size ? [selProd.size] : [])) : [];
+  const selProdColors = selProd ? (selProd.colors && selProd.colors.length > 0 ? selProd.colors : (selProd.color ? [selProd.color] : [])) : [];
+
   const st = f.items.reduce((s, i) => s + i.subtotal, 0);
   const cT = f.items.reduce((s, i) => s + i.costUnit * i.qty, 0);
   const tot = st + Number(f.shipping_charge || 0);
 
+  // Ajustar amount_paid cuando cambia el total o el estado
+  const displayAmountPaid = f.payment_status === 'paid' ? tot : (f.payment_status === 'pending' ? 0 : f.amount_paid);
+  const due = Math.max(0, tot - displayAmountPaid);
+
+  function addItem() {
+    if (!selProd) return;
+    const size = selSize || selProdSizes[0] || '';
+    const color = selColor || selProdColors[0] || '';
+    if (f.items.find(i => i.productId === selProd.id && i.size === size && i.color === color)) {
+      alert('Ese producto con esa talla/color ya está en el pedido'); return;
+    }
+    if (qty > selProd.stock) {
+      alert(`Solo hay ${selProd.stock} unidades disponibles de ${selProd.name}`); return;
+    }
+    setF({ ...f, items: [...f.items, { productId: selProd.id, name: selProd.name, code: selProd.code, qty, size, color, priceUnit: selProd.price, costUnit: selProd.cost_total, subtotal: selProd.price * qty }] });
+    setSel(''); setQty(1); setSelSize(''); setSelColor('');
+  }
+
   return (
     <div>
-      <Fld label="Clienta"><input className="neu-input" value={f.customer_name} onChange={e => setF({ ...f, customer_name: e.target.value })} placeholder="Nombre o @instagram" /></Fld>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Fld label="Clienta"><input className="neu-input" value={f.customer_name} onChange={e => setF({ ...f, customer_name: e.target.value })} placeholder="Nombre o @instagram" /></Fld>
+        <Fld label="Ciudad"><input className="neu-input" value={f.city} onChange={e => setF({ ...f, city: e.target.value })} placeholder="Ej: Manizales" /></Fld>
+      </div>
       <Fld label="Canal">
         <select className="neu-select" value={f.channel} onChange={e => setF({ ...f, channel: e.target.value })}>
-          {['WhatsApp', 'Instagram', 'Facebook', 'Otro'].map(c => <option key={c}>{c}</option>)}
+          {['WhatsApp', 'Instagram', 'Facebook', 'Presencial', 'Otro'].map(c => <option key={c}>{c}</option>)}
         </select>
       </Fld>
+
       <div className="label">Productos</div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        <select className="neu-select" value={sel} onChange={e => setSel(e.target.value)} style={{ flex: 1 }}>
-          <option value="">Seleccionar...</option>
-          {av.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name} ({p.stock})</option>)}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <select className="neu-select" value={sel} onChange={e => { setSel(e.target.value); setSelSize(''); setSelColor(''); }} style={{ flex: 1 }}>
+          <option value="">Seleccionar producto...</option>
+          {av.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name} (stock: {p.stock})</option>)}
         </select>
-        <input className="neu-input" type="number" min="1" value={qty} onChange={e => setQty(Number(e.target.value))} style={{ width: 50 }} />
-        <button className="neu-btn neu-btn-accent" onClick={() => {
-          const p = products.find(x => x.id === sel);
-          if (!p || f.items.find(i => i.productId === p.id)) return;
-          setF({ ...f, items: [...f.items, { productId: p.id, name: p.name, code: p.code, qty, priceUnit: p.price, costUnit: p.cost_total, subtotal: p.price * qty }] });
-          setSel(''); setQty(1);
-        }} style={{ padding: '10px 14px' }}>+</button>
+        <input className="neu-input" type="number" min="1" value={qty} onChange={e => setQty(Number(e.target.value))} style={{ width: 54 }} title="Cantidad" />
       </div>
+
+      {/* Selector de talla y color si el producto tiene opciones */}
+      {selProd && (
+        <div className="neu-card neu-pressed" style={{ padding: 10, marginBottom: 8 }}>
+          {selProdSizes.length > 0 && (
+            <div style={{ marginBottom: selProdColors.length > 0 ? 8 : 4 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 1 }}>Talla</div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {selProdSizes.map(s => (
+                  <button key={s} type="button" className="neu-btn neu-btn-sm" onClick={() => setSelSize(s)}
+                    style={{ padding: '4px 10px', fontSize: 10, ...((selSize || selProdSizes[0]) === s ? { background: '#4A6FA5', color: '#FFF' } : {}) }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {selProdColors.length > 0 && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 1 }}>Color</div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {selProdColors.map(c => (
+                  <button key={c} type="button" className="neu-btn neu-btn-sm" onClick={() => setSelColor(c)}
+                    style={{ padding: '4px 10px', fontSize: 10, ...((selColor || selProdColors[0]) === c ? { background: '#4A6FA5', color: '#FFF' } : {}) }}>
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <button className="neu-btn neu-btn-accent" style={{ width: '100%', marginBottom: 12 }} onClick={addItem} disabled={!selProd}>
+        + Agregar producto al pedido
+      </button>
+
       {f.items.map((it, i) => (
-        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #E5E7EB' }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600 }}>{it.name} ×{it.qty}</div>
-            <div style={{ fontSize: 9, color: '#6B7280' }}>{it.code}</div>
+        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid #E5E7EB', background: '#F0F2F5', borderRadius: 8, marginBottom: 4 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>{it.name} ×{it.qty}</div>
+            <div style={{ fontSize: 9, color: '#6B7280' }}>{it.code}{it.size ? ` · Talla: ${it.size}` : ''}{it.color ? ` · ${it.color}` : ''} · {cur(it.priceUnit)}/u</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontWeight: 700 }}>{cur(it.subtotal)}</span>
+            <span style={{ fontWeight: 700, fontSize: 13 }}>{cur(it.subtotal)}</span>
             <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => setF({ ...f, items: f.items.filter((_, j) => j !== i) })} style={{ padding: '2px 6px' }}>✕</button>
           </div>
         </div>
       ))}
       {f.items.length > 0 && <div style={{ height: 12 }} />}
-      <Fld label="Envío a clienta"><input className="neu-input" type="number" value={f.shipping_charge} onChange={e => setF({ ...f, shipping_charge: Number(e.target.value) })} /></Fld>
+
+      <Fld label="Envío cobrado a la clienta"><input className="neu-input" type="number" value={f.shipping_charge} onChange={e => setF({ ...f, shipping_charge: Number(e.target.value) })} /></Fld>
+
       <div className="neu-card neu-pressed" style={{ padding: 12, marginBottom: 14, display: 'flex', justifyContent: 'space-between' }}>
-        <span style={{ fontWeight: 600 }}>Total</span>
+        <span style={{ fontWeight: 600 }}>Total del pedido</span>
         <span style={{ fontSize: 17, fontWeight: 800 }}>{cur(tot)}</span>
       </div>
+
+      {/* ── SECCIÓN DE PAGO ── */}
+      <div style={{ padding: '12px 14px', marginBottom: 14, borderRadius: 12, background: '#F0F2F5', boxShadow: 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF' }}>
+        <div className="label" style={{ marginBottom: 10 }}>Estado del pago</div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {[
+            { k: 'pending', label: '○ Pendiente' },
+            { k: 'partial', label: '◐ Abono' },
+            { k: 'paid', label: '● Pagado' },
+          ].map(opt => (
+            <button key={opt.k} type="button" className="neu-btn neu-btn-sm"
+              onClick={() => {
+                if (opt.k === 'paid') setF({ ...f, payment_status: 'paid', amount_paid: tot });
+                else if (opt.k === 'pending') setF({ ...f, payment_status: 'pending', amount_paid: 0 });
+                else setF({ ...f, payment_status: 'partial' });
+              }}
+              style={{
+                flex: 1, padding: '8px 6px', fontSize: 10,
+                ...(f.payment_status === opt.k ? { background: PAYMENT_STATUS[opt.k].bg, color: PAYMENT_STATUS[opt.k].color, fontWeight: 800, boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.1)' } : {})
+              }}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {f.payment_status === 'partial' && (
+          <div style={{ marginBottom: 10 }}>
+            <label className="label">¿Cuánto abonó?</label>
+            <input className="neu-input" type="number" min="0" max={tot} value={f.amount_paid}
+              onChange={e => {
+                let v = Number(e.target.value);
+                if (v < 0) v = 0;
+                if (v > tot) { setF({ ...f, amount_paid: tot, payment_status: 'paid' }); return; }
+                setF({ ...f, amount_paid: v });
+              }} placeholder="Ej: 30000" />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginTop: 6, padding: '0 4px' }}>
+              <span style={{ color: '#4A9E6B' }}>Abonado: <b>{cur(f.amount_paid)}</b></span>
+              <span style={{ color: '#C0504E' }}>Por cobrar: <b>{cur(due)}</b></span>
+            </div>
+          </div>
+        )}
+
+        <Fld label="Notas de pago (opcional)">
+          <input className="neu-input" value={f.payment_notes} onChange={e => setF({ ...f, payment_notes: e.target.value })} placeholder="Paga el viernes, transferencia Nequi..." />
+        </Fld>
+      </div>
+
       <button className="neu-btn neu-btn-accent" style={{ width: '100%' }}
-        onClick={() => { if (!f.customer_name) return alert('Nombre requerido'); if (!f.items.length) return alert('Agrega productos'); onSave({ ...f, total: tot, cost_total: cT }); }}>
+        onClick={() => {
+          if (!f.customer_name) return alert('Falta el nombre de la clienta');
+          if (!f.items.length) return alert('Agrega al menos un producto');
+          const ap = f.payment_status === 'paid' ? tot : (f.payment_status === 'pending' ? 0 : Number(f.amount_paid || 0));
+          if (f.payment_status === 'partial' && ap <= 0) return alert('Indica el monto que abonó (o cambia a "Pendiente")');
+          onSave({
+            customer_name: f.customer_name, city: f.city, channel: f.channel,
+            items: f.items, shipping_charge: Number(f.shipping_charge || 0),
+            total: tot, cost_total: cT,
+            payment_status: f.payment_status, amount_paid: ap, payment_notes: f.payment_notes,
+          });
+        }}>
         Crear pedido
       </button>
     </div>
@@ -1176,10 +1526,31 @@ function CatCfgForm({ cfg, onSave }) {
   );
 }
 
-function BulkForm({ categories, onSave }) {
+function BulkForm({ categories, existingProducts = [], onSave }) {
   const emptyRow = { name: '', category: categories[0] || 'Otro', productCategories: [], color: '', size: 'M', sizes: [], cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 1, description: '', photo_url: '', photo_url_2: '', discount: 0, hide_price: false };
   const [rows, setRows] = useState([{ ...emptyRow }, { ...emptyRow }, { ...emptyRow }]);
   const [saving, setSaving] = useState(false);
+
+  // Mapa de nombres existentes en DB (normalizados)
+  const existingNames = useMemo(() => {
+    const map = new Map();
+    existingProducts.forEach(p => map.set(normalizeName(p.name), p.code));
+    return map;
+  }, [existingProducts]);
+
+  // Para cada fila: está duplicado contra DB o contra otra fila?
+  function getRowDupInfo(i) {
+    const n = normalizeName(rows[i].name);
+    if (!n) return null;
+    if (existingNames.has(n)) return { type: 'db', code: existingNames.get(n) };
+    // Duplicado dentro de las filas: primera fila con ese nombre "gana", las siguientes marcan duplicado
+    for (let j = 0; j < i; j++) {
+      if (normalizeName(rows[j].name) === n) return { type: 'row', rowIndex: j };
+    }
+    return null;
+  }
+
+  const anyDuplicate = rows.some((r, i) => r.name.trim() && getRowDupInfo(i));
 
   function updateRow(i, field, value) {
     setRows(prev => prev.map((r, j) => j === i ? { ...r, [field]: value } : r));
@@ -1197,9 +1568,11 @@ function BulkForm({ categories, onSave }) {
   async function handleSave() {
     const valid = rows.filter(r => r.name.trim());
     if (valid.length === 0) return alert('Agrega al menos un producto con nombre');
+    if (anyDuplicate) return alert('Hay nombres duplicados marcados en rojo. Corrige antes de guardar.');
     setSaving(true);
     const items = valid.map(r => ({
       ...r,
+      name: r.name.trim(),
       cost_total: (Number(r.cost_product) || 0) + (Number(r.cost_bag) || 0) + (Number(r.cost_shipping) || 0),
       categories: r.productCategories.length > 0 ? r.productCategories : [r.category],
       category: r.productCategories.length > 0 ? r.productCategories[0] : r.category,
@@ -1214,19 +1587,31 @@ function BulkForm({ categories, onSave }) {
         Llena los datos de cada producto. Solo los que tengan nombre se guardarán. Los campos de costos y fotos los puedes editar después.
       </p>
 
-      {rows.map((r, i) => (
-        <div key={i} className="neu-card" style={{ padding: 14, marginBottom: 10, position: 'relative' }}>
+      {rows.map((r, i) => {
+        const dup = getRowDupInfo(i);
+        return (
+        <div key={i} className="neu-card" style={{ padding: 14, marginBottom: 10, position: 'relative', ...(dup ? { boxShadow: '0 0 0 2px #C0504E, 5px 5px 10px #D1D3D6, -5px -5px 10px #FFFFFF' } : {}) }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: '#4A6FA5' }}>Producto {i + 1}</div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: dup ? '#C0504E' : '#4A6FA5' }}>Producto {i + 1}{dup && ' ⚠'}</div>
             {rows.length > 1 && (
               <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => removeRow(i)} style={{ padding: '2px 8px', fontSize: 10 }}>✕</button>
             )}
           </div>
 
+          {dup && (
+            <div style={{ fontSize: 10, color: '#C0504E', padding: '6px 10px', background: '#FEE2E2', borderRadius: 8, marginBottom: 10 }}>
+              {dup.type === 'db'
+                ? <>Ya existe un producto con este nombre: <b>{dup.code}</b></>
+                : <>Nombre duplicado con el producto <b>#{dup.rowIndex + 1}</b> en esta lista</>
+              }
+            </div>
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
             <div>
               <label className="label">Nombre *</label>
-              <input className="neu-input" value={r.name} onChange={e => updateRow(i, 'name', e.target.value)} placeholder="Ej: Blusa floral" style={{ fontSize: 12 }} />
+              <input className="neu-input" value={r.name} onChange={e => updateRow(i, 'name', e.target.value)} placeholder="Ej: Blusa floral"
+                style={{ fontSize: 12, ...(dup ? { boxShadow: 'inset 0 0 0 2px #C0504E, inset 3px 3px 6px #FCA5A5, inset -3px -3px 6px #FEE2E2', color: '#C0504E' } : {}) }} />
             </div>
             <div>
               <label className="label">Color</label>
@@ -1289,13 +1674,19 @@ function BulkForm({ categories, onSave }) {
             </div>
           </div>
         </div>
-      ))}
+      );})}
 
       <button className="neu-btn" style={{ width: '100%', marginBottom: 12 }} onClick={addRow}>
         + Agregar otro producto
       </button>
 
-      <button className="neu-btn neu-btn-accent" style={{ width: '100%' }} onClick={handleSave} disabled={saving}>
+      {anyDuplicate && (
+        <div style={{ fontSize: 10, color: '#C0504E', padding: '8px 12px', background: '#FEE2E2', borderRadius: 8, marginBottom: 10, textAlign: 'center' }}>
+          ⚠ Corrige los nombres duplicados antes de guardar
+        </div>
+      )}
+
+      <button className="neu-btn neu-btn-accent" style={{ width: '100%', ...(anyDuplicate ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }} onClick={handleSave} disabled={saving || anyDuplicate}>
         {saving ? 'Guardando...' : `📦 Guardar ${rows.filter(r => r.name.trim()).length} producto(s)`}
       </button>
     </div>
