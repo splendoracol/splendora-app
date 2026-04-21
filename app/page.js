@@ -258,6 +258,28 @@ export default function HomePage() {
   const [newCat, setNewCat] = useState('');
   const [showBulk, setShowBulk] = useState(false);
 
+  // Estados de colapsables del dashboard (se guardan en localStorage)
+  const [dashSocias, setDashSocias] = useState(true);
+  const [dashProyeccion, setDashProyeccion] = useState(true);
+  const [dashStock, setDashStock] = useState(true);
+
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem('dash_socias');
+      const p = localStorage.getItem('dash_proyeccion');
+      const st = localStorage.getItem('dash_stock');
+      if (s !== null) setDashSocias(s === '1');
+      if (p !== null) setDashProyeccion(p === '1');
+      if (st !== null) setDashStock(st === '1');
+    } catch {}
+  }, []);
+
+  const toggleDash = (setter, current, key) => {
+    const next = !current;
+    setter(next);
+    try { localStorage.setItem(key, next ? '1' : '0'); } catch {}
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s);
@@ -546,49 +568,73 @@ export default function HomePage() {
 
             {/* Division 10/45/45 */}
             <div className="neu-card" style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12 }}>División (10% / 45% / 45%)</div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {[
-                  { n: 'SPLENDORA', p: '10%', v: m.biz, c: '#4A6FA5' },
-                  { n: config.partner1, p: '45%', v: m.s1, c: '#1A1D23' },
-                  { n: config.partner2, p: '45%', v: m.s2, c: '#1A1D23' },
-                ].map((x, i) => (
-                  <div key={i} className="neu-card neu-pressed" style={{ flex: 1, textAlign: 'center', padding: 10 }}>
-                    <div style={{ fontSize: 8, color: '#6B7280' }}>{x.n} ({x.p})</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, marginTop: 4, color: x.c }}>{cur(x.v)}</div>
-                  </div>
-                ))}
+              <div onClick={() => toggleDash(setDashSocias, dashSocias, 'dash_socias')}
+                style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: dashSocias ? 12 : 0, userSelect: 'none' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5 }}>División (10% / 45% / 45%)</div>
+                <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{dashSocias ? '▾' : '▸'}</span>
               </div>
+              {dashSocias && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {[
+                    { n: 'SPLENDORA', p: '10%', v: m.biz, c: '#4A6FA5' },
+                    { n: config.partner1, p: '45%', v: m.s1, c: '#1A1D23' },
+                    { n: config.partner2, p: '45%', v: m.s2, c: '#1A1D23' },
+                  ].map((x, i) => (
+                    <div key={i} className="neu-card neu-pressed" style={{ flex: 1, textAlign: 'center', padding: 10 }}>
+                      <div style={{ fontSize: 8, color: '#6B7280' }}>{x.n} ({x.p})</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, marginTop: 4, color: x.c }}>{cur(x.v)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Projected profit */}
             <div className="neu-card" style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12 }}>📊 Si vendes todo el inventario</div>
-              <div className="neu-card neu-pressed" style={{ textAlign: 'center', padding: 12, marginBottom: 10 }}>
-                <div style={{ fontSize: 8, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>Ganancia total proyectada</div>
-                <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: m.projProfit >= 0 ? '#4A9E6B' : '#C0504E' }}>{cur(m.projProfit)}</div>
+              <div onClick={() => toggleDash(setDashProyeccion, dashProyeccion, 'dash_proyeccion')}
+                style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: dashProyeccion ? 12 : 0, userSelect: 'none' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5 }}>📊 Si vendes todo el inventario</div>
+                <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{dashProyeccion ? '▾' : '▸'}</span>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {[
-                  { n: 'SPLENDORA', p: '10%', v: m.projBiz, c: '#4A6FA5' },
-                  { n: config.partner1, p: '45%', v: m.projS1, c: '#1A1D23' },
-                  { n: config.partner2, p: '45%', v: m.projS2, c: '#1A1D23' },
-                ].map((x, i) => (
-                  <div key={i} style={{ flex: 1, textAlign: 'center', padding: 8, borderRadius: 10, background: '#F0F2F5' }}>
-                    <div style={{ fontSize: 7, color: '#6B7280' }}>{x.n}</div>
-                    <div style={{ fontSize: 12, fontWeight: 800, marginTop: 2, color: x.c }}>{cur(x.v)}</div>
+              {dashProyeccion && (
+                <>
+                  <div className="neu-card neu-pressed" style={{ textAlign: 'center', padding: 12, marginBottom: 10 }}>
+                    <div style={{ fontSize: 8, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>Ganancia total proyectada</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: m.projProfit >= 0 ? '#4A9E6B' : '#C0504E' }}>{cur(m.projProfit)}</div>
                   </div>
-                ))}
-              </div>
-              <div style={{ fontSize: 8, color: '#9CA3AF', marginTop: 8, textAlign: 'center' }}>Basado en {products.reduce((s, p) => s + (p.stock || 0), 0)} unidades en inventario</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[
+                      { n: 'SPLENDORA', p: '10%', v: m.projBiz, c: '#4A6FA5' },
+                      { n: config.partner1, p: '45%', v: m.projS1, c: '#1A1D23' },
+                      { n: config.partner2, p: '45%', v: m.projS2, c: '#1A1D23' },
+                    ].map((x, i) => (
+                      <div key={i} style={{ flex: 1, textAlign: 'center', padding: 8, borderRadius: 10, background: '#F0F2F5' }}>
+                        <div style={{ fontSize: 7, color: '#6B7280' }}>{x.n}</div>
+                        <div style={{ fontSize: 12, fontWeight: 800, marginTop: 2, color: x.c }}>{cur(x.v)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 8, color: '#9CA3AF', marginTop: 8, textAlign: 'center' }}>Basado en {products.reduce((s, p) => s + (p.stock || 0), 0)} unidades en inventario</div>
+                </>
+              )}
             </div>
 
             {/* Alerts */}
             {(m.low.length > 0 || m.out.length > 0) && (
               <div className="neu-card" style={{ marginTop: 14, padding: 14 }}>
-                <div style={{ fontSize: 9, fontWeight: 700, color: '#D4A843', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>⚠ Stock bajo</div>
-                {m.out.map(p => <div key={p.id} style={{ fontSize: 11, color: '#C0504E', marginBottom: 3 }}><b>{p.code}</b> {p.name} — Agotado</div>)}
-                {m.low.map(p => <div key={p.id} style={{ fontSize: 11, color: '#D4A843', marginBottom: 3 }}><b>{p.code}</b> {p.name} — {p.stock}</div>)}
+                <div onClick={() => toggleDash(setDashStock, dashStock, 'dash_stock')}
+                  style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: dashStock ? 8 : 0, userSelect: 'none' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: '#D4A843', textTransform: 'uppercase', letterSpacing: 1.5 }}>
+                    ⚠ Stock bajo ({m.out.length + m.low.length})
+                  </div>
+                  <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{dashStock ? '▾' : '▸'}</span>
+                </div>
+                {dashStock && (
+                  <>
+                    {m.out.map(p => <div key={p.id} style={{ fontSize: 11, color: '#C0504E', marginBottom: 3 }}><b>{p.code}</b> {p.name} — Agotado</div>)}
+                    {m.low.map(p => <div key={p.id} style={{ fontSize: 11, color: '#D4A843', marginBottom: 3 }}><b>{p.code}</b> {p.name} — {p.stock}</div>)}
+                  </>
+                )}
               </div>
             )}
 
