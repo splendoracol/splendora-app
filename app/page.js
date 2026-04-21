@@ -293,6 +293,7 @@ export default function HomePage() {
       description: prod.description || '',
       photo_url: prod.photo_url || '',
       photo_url_2: prod.photo_url_2 || '',
+      extra_photos: prod.extra_photos || [],
       discount: prod.discount || 0,
       hide_price: prod.hide_price || false,
     };
@@ -363,6 +364,7 @@ export default function HomePage() {
     return {
       ic, ir, dn, rv, cs, ex, nt, biz, s1, s2,
       projProfit, projBiz, projS1, projS2,
+      totalUnits: products.reduce((s, p) => s + (p.stock || 0), 0),
       low: products.filter(p => p.stock > 0 && p.stock <= 2),
       out: products.filter(p => p.stock === 0),
       pnd: filteredOrders.filter(o => o.status === 'pending' || o.status === 'confirmed'),
@@ -408,7 +410,7 @@ export default function HomePage() {
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               {[
-                { l: 'Productos', v: products.length, s: `${m.out.length} agotados` },
+                { l: 'Productos', v: products.length, s: `${m.totalUnits} unidades · ${m.out.length} agotados` },
                 { l: 'Pedidos pend.', v: m.pnd.length, s: `${m.dn.length} entregados`, c: '#4A6FA5' },
                 { l: 'Inversión', v: cur(m.ic), s: `Valor: ${cur(m.ir)}`, c: '#4A6FA5' },
                 { l: 'Ganancia', v: cur(m.nt), s: `SPLENDORA: ${cur(m.biz)}`, c: m.nt >= 0 ? '#4A9E6B' : '#C0504E' },
@@ -771,16 +773,18 @@ function ProductForm({ initial, onSave, categories }) {
     cost_shipping: initial.cost_shipping, price: initial.price, stock: initial.stock,
     description: initial.description, photo_url: initial.photo_url,
     photo_url_2: initial.photo_url_2 || '',
+    extra_photos: initial.extra_photos || [],
     discount: initial.discount || 0, hide_price: initial.hide_price || false,
   } : {
     name: '', category: 'Blusas', productCategories: [], size: 'M', sizes: [], color: '', colors: [],
     cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 1,
-    description: '', photo_url: '', photo_url_2: '', discount: 0, hide_price: false,
+    description: '', photo_url: '', photo_url_2: '', extra_photos: [], discount: 0, hide_price: false,
   });
 
   const [uploading, setUploading] = useState(false);
   const ref1 = useRef(null);
   const ref2 = useRef(null);
+  const refExtra = useRef(null);
   const ct = (Number(f.cost_product) || 0) + (Number(f.cost_bag) || 0) + (Number(f.cost_shipping) || 0);
   const mg = f.price > 0 ? ((f.price - ct) / f.price * 100).toFixed(1) : 0;
 
@@ -799,10 +803,10 @@ function ProductForm({ initial, onSave, categories }) {
 
   return (
     <div>
-      {/* TWO PHOTO UPLOADS */}
+      {/* PHOTO UPLOADS */}
       <div style={{ marginBottom: 16 }}>
-        <label className="label">Fotos del producto (máximo 2)</label>
-        <div style={{ display: 'flex', gap: 12 }}>
+        <label className="label">Fotos del producto</label>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
           {/* Photo 1 */}
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 9, color: '#6B7280', marginBottom: 4, textAlign: 'center', fontWeight: 600 }}>📷 Principal</div>
@@ -837,6 +841,34 @@ function ProductForm({ initial, onSave, categories }) {
             {f.photo_url_2 && <button className="neu-btn neu-btn-sm" style={{ width: '100%', marginTop: 4, fontSize: 9 }} onClick={() => setF({ ...f, photo_url_2: '' })}>Quitar</button>}
           </div>
         </div>
+
+        {/* Extra photos */}
+        {f.extra_photos.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+            {f.extra_photos.map((url, i) => (
+              <div key={i} style={{ position: 'relative', width: 70, height: 70 }}>
+                <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10, boxShadow: 'var(--raised-sm)' }} />
+                <button onClick={() => setF(prev => ({ ...prev, extra_photos: prev.extra_photos.filter((_, j) => j !== i) }))}
+                  style={{ position: 'absolute', top: -4, right: -4, background: '#C0504E', color: '#FFF', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <input ref={refExtra} type="file" accept="image/*" style={{ display: 'none' }} onChange={async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          setUploading(true);
+          try {
+            const url = await uploadPhoto(file);
+            setF(prev => ({ ...prev, extra_photos: [...prev.extra_photos, url] }));
+          } catch (err) { alert('Error: ' + err.message); }
+          setUploading(false);
+          if (refExtra.current) refExtra.current.value = '';
+        }} />
+        <button type="button" className="neu-btn neu-btn-sm" onClick={() => refExtra.current?.click()} style={{ width: '100%', fontSize: 10 }}>
+          {uploading ? 'Subiendo...' : `📷 + Agregar más fotos (${f.extra_photos.length} extras)`}
+        </button>
       </div>
 
       <Fld label="Nombre"><input className="neu-input" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Ej: Blusa floral" /></Fld>
