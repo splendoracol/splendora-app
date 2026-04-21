@@ -53,28 +53,19 @@ function buildExcel(products, orders, expenses, config, month, year) {
   const fo = month !== null ? orders.filter(o => { const d = new Date(o.created_at); return d.getMonth() === month && d.getFullYear() === year; }) : orders;
   const fe = month !== null ? expenses.filter(x => { const d = new Date(x.created_at); return d.getMonth() === month && d.getFullYear() === year; }) : expenses;
   const nonCanc = fo.filter(o => o.status !== 'cancelled');
-  // Ingresos = dinero realmente recibido (pagos completos + abonos parciales)
-  const rv = nonCanc.reduce((a, o) => {
+  // Ingresos = ventas totales (accrual)
+  const rv = nonCanc.reduce((a, o) => a + (o.total || 0), 0);
+  // Costos reales de productos vendidos
+  const cs = nonCanc.reduce((a, o) => a + (o.cost_total || 0), 0);
+  // Dinero realmente cobrado
+  const cashReceived = nonCanc.reduce((a, o) => {
     const ps = o.payment_status || 'pending';
     if (ps === 'paid') return a + (o.total || 0);
     if (ps === 'partial') return a + (o.amount_paid || 0);
     return a;
   }, 0);
-  // Costos proporcionales al ingreso recibido (conserva margen real)
-  const cs = nonCanc.reduce((a, o) => {
-    const ps = o.payment_status || 'pending';
-    const total = o.total || 0;
-    const cost = o.cost_total || 0;
-    if (ps === 'paid') return a + cost;
-    if (ps === 'partial' && total > 0) return a + cost * ((o.amount_paid || 0) / total);
-    return a;
-  }, 0);
-  // Por cobrar (accounts receivable)
-  const pc = nonCanc.reduce((a, o) => {
-    const ps = o.payment_status || 'pending';
-    if (ps === 'paid') return a;
-    return a + Math.max(0, (o.total || 0) - (o.amount_paid || 0));
-  }, 0);
+  // Por cobrar = ventas − cobrado
+  const pc = Math.max(0, rv - cashReceived);
   const ex = fe.reduce((a, x) => a + (x.amount || 0), 0);
   const nt = rv - cs - ex;
   // Distribución: gastos salen primero del 10% de SPLENDORA; si no alcanza, socias cubren déficit 50/50
@@ -86,7 +77,7 @@ function buildExcel(products, orders, expenses, config, month, year) {
   else { const d = (ex - bizBase) / 2; biz = 0; s1 = socBase - d; s2 = socBase - d; }
   const mk = (nm, h, rows) => `<Worksheet ss:Name="${nm}"><Table><Row>${h.map(x => `<Cell ss:StyleID="h"><Data ss:Type="String">${x}</Data></Cell>`).join('')}</Row>${rows}</Table></Worksheet>`;
   const period = month !== null ? `${MONTHS[month]} ${year}` : 'Todo';
-  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos recibidos')}${n(rv)}</Row><Row>${s('Costos (productos vendidos)')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Por cobrar')}${n(pc)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA (10%)')}${n(biz)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo u.', 'Precio u.', 'Stock', 'Inversión (costo×stock)', 'Valor venta (precio×stock)', 'Ganancia proy. (×stock)', 'Descuento %'], products.map(p => { const inv = (p.cost_total || 0) * (p.stock || 0); const val = (p.price || 0) * (p.stock || 0); const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0); return `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(inv)}${n(val)}${n(gp)}${n(p.discount)}</Row>`; }).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Productos', 'Total', 'Costo', 'Estado entrega', 'Estado pago', 'Abonado', 'Por cobrar', 'Notas pago'], fo.map(o => { const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0)); const ps = o.payment_status || 'pending'; return `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.city || '')}${s(o.channel)}${s((o.items || []).map(i => `${i.name} x${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}${s(PAYMENT_STATUS[ps]?.label || ps)}${n(o.amount_paid)}${n(ps === 'paid' ? 0 : due)}${s(o.payment_notes || '')}</Row>`; }).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
+  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos (ventas)')}${n(rv)}</Row><Row>${s('Cobrado')}${n(cashReceived)}</Row><Row>${s('Por cobrar')}${n(pc)}</Row><Row>${s('Costos (productos vendidos)')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA (10%)')}${n(biz)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo u.', 'Precio u.', 'Stock', 'Inversión (costo×stock)', 'Valor venta (precio×stock)', 'Ganancia proy. (×stock)', 'Descuento %'], products.map(p => { const inv = (p.cost_total || 0) * (p.stock || 0); const val = (p.price || 0) * (p.stock || 0); const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0); return `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(inv)}${n(val)}${n(gp)}${n(p.discount)}</Row>`; }).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Productos', 'Total', 'Costo', 'Estado entrega', 'Estado pago', 'Abonado', 'Por cobrar', 'Notas pago'], fo.map(o => { const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0)); const ps = o.payment_status || 'pending'; return `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.city || '')}${s(o.channel)}${s((o.items || []).map(i => `${i.name} x${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}${s(PAYMENT_STATUS[ps]?.label || ps)}${n(o.amount_paid)}${n(ps === 'paid' ? 0 : due)}${s(o.payment_notes || '')}</Row>`; }).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
 }
 
 function dlExcel(p, o, e, c, month, year) {
@@ -167,7 +158,7 @@ function MonthFilter({ month, year, onChange }) {
 }
 
 // ── SALES CHART ──
-// Muestra dinero realmente recibido por mes (pagos completos + abonos parciales)
+// Muestra ventas totales por mes (accrual: cuenta al venderse, no al cobrarse)
 function SalesChart({ orders }) {
   const year = new Date().getFullYear();
   const monthlyData = useMemo(() => {
@@ -176,14 +167,9 @@ function SalesChart({ orders }) {
         const d = new Date(o.created_at);
         return d.getMonth() === i && d.getFullYear() === year && o.status !== 'cancelled';
       });
-      let revenue = 0, cost = 0, count = 0;
-      monthOrders.forEach(o => {
-        const ps = o.payment_status || 'pending';
-        const total = o.total || 0;
-        const c = o.cost_total || 0;
-        if (ps === 'paid') { revenue += total; cost += c; count++; }
-        else if (ps === 'partial') { revenue += (o.amount_paid || 0); if (total > 0) cost += c * ((o.amount_paid || 0) / total); count++; }
-      });
+      const revenue = monthOrders.reduce((s, o) => s + (o.total || 0), 0);
+      const cost = monthOrders.reduce((s, o) => s + (o.cost_total || 0), 0);
+      const count = monthOrders.length;
       return { name: name.slice(0, 3), revenue, cost, profit: revenue - cost, count, month: i };
     });
     return data;
@@ -195,7 +181,7 @@ function SalesChart({ orders }) {
   return (
     <div className="neu-card" style={{ padding: 16, marginBottom: 14 }}>
       <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 14 }}>
-        📊 Dinero recibido por mes — {year}
+        📊 Ventas por mes — {year}
       </div>
 
       {/* Bar chart */}
@@ -438,29 +424,20 @@ export default function HomePage() {
     const nonCanc = filteredOrders.filter(o => o.status !== 'cancelled');
     const dn = nonCanc.filter(o => o.status === 'delivered');
 
-    // ── CONTABILIDAD EN EFECTIVO (lo que realmente entró) ──
-    // Ingresos = pagos completos + abonos parciales recibidos
-    const rv = nonCanc.reduce((s, o) => {
+    // ── CONTABILIDAD ACCRUAL (estándar para negocios) ──
+    // Ingresos = total facturado del periodo (las ventas cuentan al venderse, no al cobrarse)
+    const rv = nonCanc.reduce((s, o) => s + (o.total || 0), 0);
+    // Costos = costo real de los productos que salieron del inventario
+    const cs = nonCanc.reduce((s, o) => s + (o.cost_total || 0), 0);
+    // Dinero realmente cobrado (informativo: lo que hay en caja de esas ventas)
+    const cashReceived = nonCanc.reduce((s, o) => {
       const ps = o.payment_status || 'pending';
       if (ps === 'paid') return s + (o.total || 0);
       if (ps === 'partial') return s + (o.amount_paid || 0);
       return s;
     }, 0);
-    // Costos proporcionales al ingreso recibido (así el margen es real)
-    const cs = nonCanc.reduce((s, o) => {
-      const ps = o.payment_status || 'pending';
-      const total = o.total || 0;
-      const cost = o.cost_total || 0;
-      if (ps === 'paid') return s + cost;
-      if (ps === 'partial' && total > 0) return s + cost * ((o.amount_paid || 0) / total);
-      return s;
-    }, 0);
-    // Por cobrar (saldo pendiente de clientes)
-    const pc = nonCanc.reduce((s, o) => {
-      const ps = o.payment_status || 'pending';
-      if (ps === 'paid') return s;
-      return s + Math.max(0, (o.total || 0) - (o.amount_paid || 0));
-    }, 0);
+    // Por cobrar = ventas − cobrado
+    const pc = Math.max(0, rv - cashReceived);
     const ex = filteredExpenses.reduce((s, e) => s + (e.amount || 0), 0);
     const nt = rv - cs - ex;
 
@@ -500,7 +477,7 @@ export default function HomePage() {
     const projS2 = projDist * 0.5;
 
     return {
-      ic, ir, dn, rv, cs, ex, nt, biz, s1, s2, pc, gross,
+      ic, ir, dn, rv, cs, ex, nt, biz, s1, s2, pc, gross, cashReceived,
       deficitCoveredBySocia, expensesAbsorbedByBiz,
       paidOrders, partialOrders, pendingPayOrders,
       projProfit, projBiz, projS1, projS2,
@@ -556,7 +533,7 @@ export default function HomePage() {
                 { l: 'Pedidos pend.', v: m.pnd.length, s: `${m.dn.length} entregados`, c: '#4A6FA5' },
                 { l: 'Inversión inventario', v: cur(m.ic), s: `${m.totalUnits} und · Valor venta: ${cur(m.ir)}`, c: '#4A6FA5' },
                 { l: 'Por cobrar', v: cur(m.pc), s: `${m.partialOrders} abono · ${m.pendingPayOrders} pend.`, c: m.pc > 0 ? '#D4A843' : '#9CA3AF' },
-                { l: 'Ingresos recibidos', v: cur(m.rv), s: `${m.paidOrders} pagados · ${m.partialOrders} abono`, c: '#4A9E6B' },
+                { l: 'Ingresos (ventas)', v: cur(m.rv), s: `Cobrado: ${cur(m.cashReceived)}`, c: '#4A9E6B' },
                 { l: 'Ganancia neta', v: cur(m.nt), s: `SPLENDORA: ${cur(m.biz)}`, c: m.nt >= 0 ? '#4A9E6B' : '#C0504E' },
               ].map((x, i) => (
                 <div key={i} className="neu-card" style={{ padding: 14 }}>
@@ -836,7 +813,7 @@ export default function HomePage() {
             <div className="neu-card" style={{ padding: 18, marginBottom: 14 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 {[
-                  { l: 'Ingresos recibidos', v: m.rv, c: '#4A9E6B' },
+                  { l: 'Ingresos (ventas)', v: m.rv, c: '#4A9E6B' },
                   { l: 'Costos productos', v: m.cs },
                   { l: 'Gastos', v: m.ex, c: '#D4A843' },
                   { l: 'Ganancia neta', v: m.nt, c: m.nt >= 0 ? '#4A9E6B' : '#C0504E' },
@@ -848,16 +825,19 @@ export default function HomePage() {
                 ))}
               </div>
 
-              {/* Por cobrar destacado */}
-              {m.pc > 0 && (
-                <div style={{ marginTop: 12, padding: 10, borderRadius: 10, background: '#FEF3C7', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: 8, color: '#D4A843', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>⚠ Por cobrar</div>
-                    <div style={{ fontSize: 9, color: '#6B7280', marginTop: 2 }}>{m.partialOrders} con abono · {m.pendingPayOrders} sin pagar</div>
-                  </div>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: '#D4A843' }}>{cur(m.pc)}</div>
+              {/* Estado de caja: cobrado vs por cobrar */}
+              <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div style={{ padding: 10, borderRadius: 10, background: '#D1FAE5', textAlign: 'center' }}>
+                  <div style={{ fontSize: 8, color: '#4A9E6B', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>💰 Cobrado (en caja)</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, marginTop: 3, color: '#4A9E6B' }}>{cur(m.cashReceived)}</div>
+                  <div style={{ fontSize: 9, color: '#6B7280', marginTop: 2 }}>{m.paidOrders} pagados · {m.partialOrders} abono</div>
                 </div>
-              )}
+                <div style={{ padding: 10, borderRadius: 10, background: m.pc > 0 ? '#FEF3C7' : '#F0F2F5', textAlign: 'center' }}>
+                  <div style={{ fontSize: 8, color: m.pc > 0 ? '#D4A843' : '#9CA3AF', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>⏳ Por cobrar</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, marginTop: 3, color: m.pc > 0 ? '#D4A843' : '#9CA3AF' }}>{cur(m.pc)}</div>
+                  <div style={{ fontSize: 9, color: '#6B7280', marginTop: 2 }}>{m.partialOrders} con abono · {m.pendingPayOrders} sin pagar</div>
+                </div>
+              </div>
 
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
                 {[
@@ -872,8 +852,9 @@ export default function HomePage() {
                   </div>
                 ))}
               </div>
-              <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, textAlign: 'center', fontStyle: 'italic' }}>
-                * Ingresos = pagos recibidos. Gastos salen primero del 10% de SPLENDORA; si no alcanza, las socias cubren el déficit 50/50.
+              <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, textAlign: 'center', fontStyle: 'italic', lineHeight: 1.5 }}>
+                * Ingresos = ventas del periodo (cobradas o no). Ganancia neta = ingresos − costos − gastos.<br/>
+                Gastos salen primero del 10% de SPLENDORA; si no alcanza, socias cubren el déficit 50/50.
               </div>
             </div>
 
