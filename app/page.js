@@ -352,13 +352,31 @@ export default function HomePage() {
     }
   }
   async function deleteProduct(id) { await supabase.from('products').delete().eq('id', id); loadAll(); }
-  async function saveOrder(ord) { await supabase.from('orders').insert(ord); loadAll(); }
+  async function saveOrder(ord) {
+    // Insertar pedido
+    const { error: insErr } = await supabase.from('orders').insert(ord);
+    if (insErr) { alert('Error al crear pedido: ' + insErr.message); return; }
+    // Descontar stock inmediatamente (el producto queda reservado para esta clienta)
+    for (const it of (ord.items || [])) {
+      const p = products.find(x => x.id === it.productId);
+      if (p) await supabase.from('products').update({ stock: Math.max(0, (p.stock || 0) - (it.qty || 0)) }).eq('id', p.id);
+    }
+    loadAll();
+  }
   async function updateOrderStatus(id, status, items, prev) {
     await supabase.from('orders').update({ status }).eq('id', id);
-    if (status === 'delivered' && prev !== 'delivered') {
+    // Cancelar pedido activo → devolver stock al inventario
+    if (status === 'cancelled' && prev !== 'cancelled') {
       for (const it of (items || [])) {
         const p = products.find(x => x.id === it.productId);
-        if (p) await supabase.from('products').update({ stock: Math.max(0, p.stock - it.qty) }).eq('id', p.id);
+        if (p) await supabase.from('products').update({ stock: (p.stock || 0) + (it.qty || 0) }).eq('id', p.id);
+      }
+    }
+    // Reactivar pedido cancelado → volver a descontar del stock
+    if (prev === 'cancelled' && status !== 'cancelled') {
+      for (const it of (items || [])) {
+        const p = products.find(x => x.id === it.productId);
+        if (p) await supabase.from('products').update({ stock: Math.max(0, (p.stock || 0) - (it.qty || 0)) }).eq('id', p.id);
       }
     }
     loadAll();
@@ -702,7 +720,7 @@ export default function HomePage() {
                       {v.label}
                     </button>
                   ))}
-                  <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => { if (confirm('¿Cancelar este pedido?')) updateOrderStatus(o.id, 'cancelled', o.items, o.status); }}
+                  <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => { if (confirm('¿Cancelar este pedido?\n\nEl stock de los productos volverá al inventario.')) updateOrderStatus(o.id, 'cancelled', o.items, o.status); }}
                     style={{ padding: '3px 7px', fontSize: 9, marginLeft: 'auto' }}>Cancelar</button>
                 </div>
 
@@ -1247,11 +1265,16 @@ function OrderForm({ products, onSave }) {
   const selProdSizes = selProd ? (selProd.sizes && selProd.sizes.length > 0 ? selProd.sizes : (selProd.size ? [selProd.size] : [])) : [];
   const selProdColors = selProd ? (selProd.colors && selProd.colors.length > 0 ? selProd.colors : (selProd.color ? [selProd.color] : [])) : [];
 
-  const st = f.items.reduce((s, i) => s + i.subtotal, 0);
-  const cT = f.items.reduce((s, i) => s + i.costUnit * i.qty, 0);
+  // Precio efectivo = precio con descuento aplicado (igual al catálogo público)
+  const effectivePrice = (p) => {
+    if (!p) return 0;
+    return p.discount > 0 ? Math.round((p.price || 0) * (1 - p.discount / 100)) : (p.price || 0);
+  };
+
+  const st = f.items.reduce((s, i) => s + (i.subtotal || 0), 0);
+  const cT = f.items.reduce((s, i) => s + (i.costUnit || 0) * (i.qty || 0), 0);
   const tot = st + Number(f.shipping_charge || 0);
 
-  // Ajustar amount_paid cuando cambia el total o el estado
   const displayAmountPaid = f.payment_status === 'paid' ? tot : (f.payment_status === 'pending' ? 0 : f.amount_paid);
   const due = Math.max(0, tot - displayAmountPaid);
 
@@ -1262,11 +1285,39 @@ function OrderForm({ products, onSave }) {
     if (f.items.find(i => i.productId === selProd.id && i.size === size && i.color === color)) {
       alert('Ese producto con esa talla/color ya está en el pedido'); return;
     }
-    if (qty > selProd.stock) {
-      alert(`Solo hay ${selProd.stock} unidades disponibles de ${selProd.name}`); return;
+    // Stock disponible = stock actual menos lo ya reservado de este producto en otros items del pedido
+    const reservado = f.items.filter(i => i.productId === selProd.id).reduce((s, i) => s + (i.qty || 0), 0);
+    const disponible = (selProd.stock || 0) - reservado;
+    if (qty > disponible) {
+      alert(`Solo hay ${disponible} unidad(es) disponible(s) de ${selProd.name}`); return;
     }
-    setF({ ...f, items: [...f.items, { productId: selProd.id, name: selProd.name, code: selProd.code, qty, size, color, priceUnit: selProd.price, costUnit: selProd.cost_total, subtotal: selProd.price * qty }] });
+    const price = effectivePrice(selProd);
+    setF({ ...f, items: [...f.items, { productId: selProd.id, name: selProd.name, code: selProd.code, qty, size, color, priceUnit: price, costUnit: selProd.cost_total, subtotal: price * qty }] });
     setSel(''); setQty(1); setSelSize(''); setSelColor('');
+  }
+
+  function updateItemPrice(idx, newPrice) {
+    const p = Number(newPrice) || 0;
+    setF(prev => ({
+      ...prev,
+      items: prev.items.map((i, j) => j === idx ? { ...i, priceUnit: p, subtotal: p * (i.qty || 0) } : i)
+    }));
+  }
+
+  function updateItemQty(idx, newQty) {
+    const q = Math.max(1, Number(newQty) || 1);
+    const it = f.items[idx];
+    const prod = products.find(p => p.id === it.productId);
+    // Validar que no exceda el stock considerando otros items del mismo producto
+    if (prod) {
+      const reservadoOtros = f.items.filter((i, j) => j !== idx && i.productId === it.productId).reduce((s, i) => s + (i.qty || 0), 0);
+      const disponible = (prod.stock || 0) - reservadoOtros;
+      if (q > disponible) { alert(`Solo hay ${disponible} disponible(s) de ${prod.name}`); return; }
+    }
+    setF(prev => ({
+      ...prev,
+      items: prev.items.map((i, j) => j === idx ? { ...i, qty: q, subtotal: (i.priceUnit || 0) * q } : i)
+    }));
   }
 
   return (
@@ -1285,14 +1336,22 @@ function OrderForm({ products, onSave }) {
       <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
         <select className="neu-select" value={sel} onChange={e => { setSel(e.target.value); setSelSize(''); setSelColor(''); }} style={{ flex: 1 }}>
           <option value="">Seleccionar producto...</option>
-          {av.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name} (stock: {p.stock})</option>)}
+          {av.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name} (stock: {p.stock}){p.discount > 0 ? ` · -${p.discount}%` : ''}</option>)}
         </select>
         <input className="neu-input" type="number" min="1" value={qty} onChange={e => setQty(Number(e.target.value))} style={{ width: 54 }} title="Cantidad" />
       </div>
 
-      {/* Selector de talla y color si el producto tiene opciones */}
+      {/* Vista previa del producto seleccionado */}
       {selProd && (
         <div className="neu-card neu-pressed" style={{ padding: 10, marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ fontSize: 10, color: '#6B7280' }}>Precio unitario</div>
+            <div style={{ textAlign: 'right' }}>
+              {selProd.discount > 0 && <div style={{ fontSize: 9, color: '#9CA3AF', textDecoration: 'line-through' }}>{cur(selProd.price)}</div>}
+              <div style={{ fontSize: 14, fontWeight: 800, color: selProd.discount > 0 ? '#C0504E' : '#1A1D23' }}>{cur(effectivePrice(selProd))}</div>
+            </div>
+          </div>
+
           {selProdSizes.length > 0 && (
             <div style={{ marginBottom: selProdColors.length > 0 ? 8 : 4 }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 1 }}>Talla</div>
@@ -1323,28 +1382,59 @@ function OrderForm({ products, onSave }) {
       )}
 
       <button className="neu-btn neu-btn-accent" style={{ width: '100%', marginBottom: 12 }} onClick={addItem} disabled={!selProd}>
-        + Agregar producto al pedido
+        + Agregar al pedido
       </button>
 
-      {f.items.map((it, i) => (
-        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid #E5E7EB', background: '#F0F2F5', borderRadius: 8, marginBottom: 4 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 700 }}>{it.name} ×{it.qty}</div>
-            <div style={{ fontSize: 9, color: '#6B7280' }}>{it.code}{it.size ? ` · Talla: ${it.size}` : ''}{it.color ? ` · ${it.color}` : ''} · {cur(it.priceUnit)}/u</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontWeight: 700, fontSize: 13 }}>{cur(it.subtotal)}</span>
-            <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => setF({ ...f, items: f.items.filter((_, j) => j !== i) })} style={{ padding: '2px 6px' }}>✕</button>
-          </div>
+      {f.items.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div className="label">Productos del pedido</div>
+          {f.items.map((it, i) => (
+            <div key={i} style={{ padding: '10px 12px', background: '#F0F2F5', boxShadow: 'var(--raised-sm)', borderRadius: 10, marginBottom: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{it.name}</div>
+                  <div style={{ fontSize: 9, color: '#6B7280' }}>{it.code}{it.size ? ` · T: ${it.size}` : ''}{it.color ? ` · ${it.color}` : ''}</div>
+                </div>
+                <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => setF({ ...f, items: f.items.filter((_, j) => j !== i) })} style={{ padding: '2px 6px', flexShrink: 0 }}>✕</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr', gap: 6, alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 8, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>Cant.</div>
+                  <input className="neu-input" type="number" min="1" value={it.qty} onChange={e => updateItemQty(i, e.target.value)}
+                    style={{ padding: '6px 8px', fontSize: 12, textAlign: 'center' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 8, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>Precio u.</div>
+                  <input className="neu-input" type="number" min="0" value={it.priceUnit} onChange={e => updateItemPrice(i, e.target.value)}
+                    style={{ padding: '6px 8px', fontSize: 12 }} />
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 8, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', marginBottom: 2 }}>Subtotal</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#1A1D23' }}>{cur(it.subtotal)}</div>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
-      {f.items.length > 0 && <div style={{ height: 12 }} />}
+      )}
 
       <Fld label="Envío cobrado a la clienta"><input className="neu-input" type="number" value={f.shipping_charge} onChange={e => setF({ ...f, shipping_charge: Number(e.target.value) })} /></Fld>
 
-      <div className="neu-card neu-pressed" style={{ padding: 12, marginBottom: 14, display: 'flex', justifyContent: 'space-between' }}>
-        <span style={{ fontWeight: 600 }}>Total del pedido</span>
-        <span style={{ fontSize: 17, fontWeight: 800 }}>{cur(tot)}</span>
+      <div className="neu-card neu-pressed" style={{ padding: 12, marginBottom: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6B7280', marginBottom: 4 }}>
+          <span>Subtotal productos</span>
+          <span>{cur(st)}</span>
+        </div>
+        {Number(f.shipping_charge || 0) > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6B7280', marginBottom: 4 }}>
+            <span>Envío</span>
+            <span>{cur(Number(f.shipping_charge || 0))}</span>
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 6, borderTop: '1px solid #E5E7EB', marginTop: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: 13 }}>Total del pedido</span>
+          <span style={{ fontSize: 17, fontWeight: 800 }}>{cur(tot)}</span>
+        </div>
       </div>
 
       {/* ── SECCIÓN DE PAGO ── */}
