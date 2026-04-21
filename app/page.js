@@ -388,6 +388,17 @@ export default function HomePage() {
     await supabase.from('orders').update(patch).eq('id', id);
     loadAll();
   }
+  async function deleteOrder(id, items, prevStatus) {
+    // Si el pedido NO estaba cancelado, el stock estaba descontado → devolverlo al inventario
+    if (prevStatus !== 'cancelled') {
+      for (const it of (items || [])) {
+        const p = products.find(x => x.id === it.productId);
+        if (p) await supabase.from('products').update({ stock: (p.stock || 0) + (it.qty || 0) }).eq('id', p.id);
+      }
+    }
+    await supabase.from('orders').delete().eq('id', id);
+    loadAll();
+  }
   async function saveExpense(exp) { await supabase.from('expenses').insert(exp); loadAll(); }
   async function deleteExpense(id) { await supabase.from('expenses').delete().eq('id', id); loadAll(); }
   async function saveConfig(cfg) { await supabase.from('config').update(cfg).eq('id', 1); setConfig(cfg); setShowCfg(false); }
@@ -746,6 +757,16 @@ export default function HomePage() {
                   <button className="neu-btn neu-btn-sm" onClick={() => updatePayment(o.id, 'paid', o.total)}
                     style={{ padding: '3px 8px', fontSize: 9, ...(ps === 'paid' ? { boxShadow: 'var(--pressed)', color: PAYMENT_STATUS.paid.color, fontWeight: 800 } : {}) }}>
                     ● Pagado
+                  </button>
+                  <button className="neu-btn neu-btn-sm" title="Borrar pedido permanentemente"
+                    onClick={() => {
+                      const msg = o.status !== 'cancelled'
+                        ? `¿Borrar este pedido PERMANENTEMENTE?\n\nCliente: ${o.customer_name}\nTotal: ${cur(o.total)}\n\nLas unidades volverán al inventario.\nEsta acción NO se puede deshacer.`
+                        : `¿Borrar este pedido cancelado PERMANENTEMENTE?\n\nCliente: ${o.customer_name}\nTotal: ${cur(o.total)}\n\nEsta acción NO se puede deshacer.`;
+                      if (confirm(msg)) deleteOrder(o.id, o.items, o.status);
+                    }}
+                    style={{ padding: '3px 8px', fontSize: 10, marginLeft: 'auto', color: '#C0504E' }}>
+                    🗑
                   </button>
                 </div>
               </div>
