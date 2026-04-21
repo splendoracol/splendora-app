@@ -9,17 +9,18 @@ export const metadata = {
     icon: LOGO_URL,
     apple: LOGO_URL,
   },
+  // Sin `images` en openGraph/twitter:
+  // así los previews de WhatsApp no muestran el logo como fallback cuando un producto
+  // no tiene foto cargada. Cada producto define su propia foto en /producto/[code].
   openGraph: {
     title: 'SPLENDORA.COL',
     description: 'Ropa para dama — Catálogo online',
-    images: [{ url: LOGO_URL, width: 512, height: 512 }],
     type: 'website',
   },
   twitter: {
     card: 'summary',
     title: 'SPLENDORA.COL',
     description: 'Ropa para dama — Catálogo online',
-    images: [LOGO_URL],
   },
 };
 
