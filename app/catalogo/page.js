@@ -177,6 +177,16 @@ export default function CatalogoPage() {
       setCfg(c || {});
       if (cats && cats.length > 0) setCategories(cats.map(x => x.name));
       setLoading(false);
+
+      // Si llega ?code=SPL-XX-0000 en la URL, abrir ese producto automáticamente
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get('code');
+        if (code && p) {
+          const found = p.find(x => (x.code || '').toLowerCase() === code.toLowerCase());
+          if (found) setSelected(found);
+        }
+      } catch {}
     })();
   }, []);
 

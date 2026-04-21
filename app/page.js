@@ -179,11 +179,7 @@ function SalesChart({ orders }) {
   const currentMonth = new Date().getMonth();
 
   return (
-    <div className="neu-card" style={{ padding: 16, marginBottom: 14 }}>
-      <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 14 }}>
-        📊 Ventas por mes — {year}
-      </div>
-
+    <>
       {/* Bar chart */}
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 140, marginBottom: 8 }}>
         {monthlyData.map((d, i) => {
@@ -228,7 +224,7 @@ function SalesChart({ orders }) {
           </div>
         ))}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -262,15 +258,22 @@ export default function HomePage() {
   const [dashSocias, setDashSocias] = useState(true);
   const [dashProyeccion, setDashProyeccion] = useState(true);
   const [dashStock, setDashStock] = useState(true);
+  // Colapsables de finanzas
+  const [finChart, setFinChart] = useState(true);
+  const [finGastos, setFinGastos] = useState(true);
 
   useEffect(() => {
     try {
       const s = localStorage.getItem('dash_socias');
       const p = localStorage.getItem('dash_proyeccion');
       const st = localStorage.getItem('dash_stock');
+      const fc = localStorage.getItem('fin_chart');
+      const fg = localStorage.getItem('fin_gastos');
       if (s !== null) setDashSocias(s === '1');
       if (p !== null) setDashProyeccion(p === '1');
       if (st !== null) setDashStock(st === '1');
+      if (fc !== null) setFinChart(fc === '1');
+      if (fg !== null) setFinGastos(fg === '1');
     } catch {}
   }, []);
 
@@ -905,23 +908,41 @@ export default function HomePage() {
             </div>
 
             {/* MONTHLY SALES CHART */}
-            <SalesChart orders={orders} />
-
-            <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Gastos</div>
-            {filteredExpenses.length === 0 ? (
-              <div className="neu-card neu-pressed" style={{ textAlign: 'center', padding: 24, color: '#9CA3AF', fontSize: 12 }}>Sin gastos en este periodo</div>
-            ) : filteredExpenses.map(e => (
-              <div key={e.id} className="neu-card" style={{ padding: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 12 }}>{e.description}</div>
-                  <div style={{ fontSize: 9, color: '#6B7280' }}>{new Date(e.created_at).toLocaleDateString('es-CO')} · {e.paid_by}</div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontWeight: 700 }}>{cur(e.amount)}</span>
-                  <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => deleteExpense(e.id)} style={{ padding: '2px 6px', fontSize: 10 }}>✕</button>
-                </div>
+            <div className="neu-card" style={{ padding: 14, marginBottom: 14 }}>
+              <div onClick={() => toggleDash(setFinChart, finChart, 'fin_chart')}
+                style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: finChart ? 10 : 0, userSelect: 'none' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5 }}>📊 Ventas por mes — {new Date().getFullYear()}</div>
+                <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{finChart ? '▾' : '▸'}</span>
               </div>
-            ))}
+              {finChart && <SalesChart orders={orders} />}
+            </div>
+
+            {/* GASTOS */}
+            <div className="neu-card" style={{ padding: 14 }}>
+              <div onClick={() => toggleDash(setFinGastos, finGastos, 'fin_gastos')}
+                style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: finGastos ? 10 : 0, userSelect: 'none' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5 }}>
+                  Gastos ({filteredExpenses.length}){filteredExpenses.length > 0 ? ` · ${cur(m.ex)}` : ''}
+                </div>
+                <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{finGastos ? '▾' : '▸'}</span>
+              </div>
+              {finGastos && (
+                filteredExpenses.length === 0 ? (
+                  <div className="neu-card neu-pressed" style={{ textAlign: 'center', padding: 24, color: '#9CA3AF', fontSize: 12 }}>Sin gastos en este periodo</div>
+                ) : filteredExpenses.map(e => (
+                  <div key={e.id} className="neu-card" style={{ padding: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 12 }}>{e.description}</div>
+                      <div style={{ fontSize: 9, color: '#6B7280' }}>{new Date(e.created_at).toLocaleDateString('es-CO')} · {e.paid_by}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 700 }}>{cur(e.amount)}</span>
+                      <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => deleteExpense(e.id)} style={{ padding: '2px 6px', fontSize: 10 }}>✕</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
 
@@ -954,19 +975,26 @@ export default function HomePage() {
               ))}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
               {products.filter(p => p.stock > 0 && (catFilter === 'Todas' || (p.categories || [p.category]).includes(catFilter))).map(p => (
                 <div key={p.id} className="neu-card" style={{ padding: 0, overflow: 'hidden' }}>
-                  <div style={{ height: 120, boxShadow: 'var(--pressed)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', margin: 7, borderRadius: 10 }}>
-                    {p.photo_url ? <img src={p.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10 }} /> : <span style={{ fontSize: 30, color: '#9CA3AF' }}>+</span>}
+                  <div style={{ height: 90, boxShadow: 'var(--pressed)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', margin: 6, borderRadius: 8 }}>
+                    {p.photo_url ? <img src={p.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }} /> : <span style={{ fontSize: 22, color: '#9CA3AF' }}>📦</span>}
                   </div>
-                  <div style={{ padding: '6px 12px 12px' }}>
-                    <div style={{ fontSize: 8, color: '#4A6FA5', fontWeight: 700 }}>{p.code}</div>
-                    <div style={{ fontWeight: 700, fontSize: 12 }}>{p.name}</div>
-                    <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4 }}>{p.hide_price ? 'Precio oculto' : cur(p.price)}</div>
-                    <button className="neu-btn neu-btn-accent neu-btn-sm" style={{ width: '100%', marginTop: 8 }}
-                      onClick={() => { const wa = `✨ *${p.name}*\n🏷 ${p.code}\n📂 ${(p.categories || [p.category]).join(', ')} · ${(p.sizes || []).join(', ') || p.size}\n💰 ${cur(p.price)}\n🛍 SPLENDORA.COL`; navigator.clipboard?.writeText(wa); alert('¡Copiado!'); }}>
-                      📋 Copiar WA
+                  <div style={{ padding: '2px 10px 10px' }}>
+                    <div style={{ fontSize: 7, color: '#4A6FA5', fontWeight: 700 }}>{p.code}</div>
+                    <div style={{ fontWeight: 700, fontSize: 10, lineHeight: 1.3, height: 26, overflow: 'hidden' }}>{p.name}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800 }}>{p.hide_price ? '—' : cur(p.price)}</div>
+                      <div style={{ fontSize: 8, color: '#9CA3AF' }}>×{p.stock}</div>
+                    </div>
+                    <button className="neu-btn neu-btn-sm" style={{ width: '100%', marginTop: 6, fontSize: 9, padding: '5px 8px' }}
+                      onClick={() => {
+                        const url = `${window.location.origin}/catalogo?code=${encodeURIComponent(p.code)}`;
+                        navigator.clipboard?.writeText(url);
+                        alert('🔗 Link del producto copiado:\n' + url);
+                      }}>
+                      🔗 Copiar link
                     </button>
                   </div>
                 </div>
@@ -1360,8 +1388,22 @@ function OrderForm({ products, onSave }) {
   const [qty, setQty] = useState(1);
   const [selSize, setSelSize] = useState('');
   const [selColor, setSelColor] = useState('');
+  const [productSearch, setProductSearch] = useState('');
+
   const av = products.filter(p => p.stock > 0);
   const selProd = av.find(p => p.id === sel);
+
+  // Filtrar productos disponibles por búsqueda (nombre, código o categoría)
+  const filteredProducts = useMemo(() => {
+    if (!productSearch.trim()) return av;
+    const q = productSearch.trim().toLowerCase();
+    return av.filter(p =>
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.code || '').toLowerCase().includes(q) ||
+      (p.categories || [p.category]).join(' ').toLowerCase().includes(q)
+    );
+  }, [av, productSearch]);
+
   const selProdSizes = selProd ? (selProd.sizes && selProd.sizes.length > 0 ? selProd.sizes : (selProd.size ? [selProd.size] : [])) : [];
   const selProdColors = selProd ? (selProd.colors && selProd.colors.length > 0 ? selProd.colors : (selProd.color ? [selProd.color] : [])) : [];
 
@@ -1385,7 +1427,6 @@ function OrderForm({ products, onSave }) {
     if (f.items.find(i => i.productId === selProd.id && i.size === size && i.color === color)) {
       alert('Ese producto con esa talla/color ya está en el pedido'); return;
     }
-    // Stock disponible = stock actual menos lo ya reservado de este producto en otros items del pedido
     const reservado = f.items.filter(i => i.productId === selProd.id).reduce((s, i) => s + (i.qty || 0), 0);
     const disponible = (selProd.stock || 0) - reservado;
     if (qty > disponible) {
@@ -1393,7 +1434,7 @@ function OrderForm({ products, onSave }) {
     }
     const price = effectivePrice(selProd);
     setF({ ...f, items: [...f.items, { productId: selProd.id, name: selProd.name, code: selProd.code, qty, size, color, priceUnit: price, costUnit: selProd.cost_total, subtotal: price * qty }] });
-    setSel(''); setQty(1); setSelSize(''); setSelColor('');
+    setSel(''); setQty(1); setSelSize(''); setSelColor(''); setProductSearch('');
   }
 
   function updateItemPrice(idx, newPrice) {
@@ -1408,7 +1449,6 @@ function OrderForm({ products, onSave }) {
     const q = Math.max(1, Number(newQty) || 1);
     const it = f.items[idx];
     const prod = products.find(p => p.id === it.productId);
-    // Validar que no exceda el stock considerando otros items del mismo producto
     if (prod) {
       const reservadoOtros = f.items.filter((i, j) => j !== idx && i.productId === it.productId).reduce((s, i) => s + (i.qty || 0), 0);
       const disponible = (prod.stock || 0) - reservadoOtros;
@@ -1432,20 +1472,67 @@ function OrderForm({ products, onSave }) {
         </select>
       </Fld>
 
-      <div className="label">Productos</div>
+      <div className="label">Buscar producto</div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-        <select className="neu-select" value={sel} onChange={e => { setSel(e.target.value); setSelSize(''); setSelColor(''); }} style={{ flex: 1 }}>
-          <option value="">Seleccionar producto...</option>
-          {av.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name} (stock: {p.stock}){p.discount > 0 ? ` · -${p.discount}%` : ''}</option>)}
-        </select>
-        <input className="neu-input" type="number" min="1" value={qty} onChange={e => setQty(Number(e.target.value))} style={{ width: 54 }} title="Cantidad" />
+        <input className="neu-input" value={productSearch} onChange={e => setProductSearch(e.target.value)}
+          placeholder="Nombre, código o categoría..." style={{ flex: 1 }} />
+        {productSearch && (
+          <button className="neu-btn neu-btn-sm" onClick={() => setProductSearch('')} style={{ padding: '0 12px' }}>✕</button>
+        )}
       </div>
 
-      {/* Vista previa del producto seleccionado */}
+      {/* Lista de productos filtrada */}
+      {filteredProducts.length === 0 ? (
+        <div className="neu-card neu-pressed" style={{ padding: 20, textAlign: 'center', color: '#9CA3AF', fontSize: 11, marginBottom: 8 }}>
+          {productSearch ? `Sin resultados para "${productSearch}"` : 'No hay productos con stock'}
+        </div>
+      ) : (
+        <div style={{ maxHeight: 220, overflowY: 'auto', marginBottom: 8, borderRadius: 12, boxShadow: 'var(--pressed)', background: '#F0F2F5' }}>
+          {filteredProducts.slice(0, 50).map(p => {
+            const isSel = sel === p.id;
+            const disc = p.discount > 0;
+            const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
+            return (
+              <div key={p.id} onClick={() => { setSel(p.id); setSelSize(''); setSelColor(''); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                  cursor: 'pointer',
+                  background: isSel ? '#E8EAED' : 'transparent',
+                  borderBottom: '1px solid #E5E7EB',
+                  ...(isSel ? { borderLeft: '3px solid #4A6FA5' } : {}),
+                }}>
+                <div style={{ width: 38, height: 38, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: '#E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {p.photo_url
+                    ? <img src={p.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : <span style={{ fontSize: 16, color: '#9CA3AF' }}>📦</span>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+                  <div style={{ fontSize: 9, color: '#6B7280' }}>{p.code} · Stock: {p.stock}{disc ? ` · -${p.discount}%` : ''}</div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800 }}>{cur(fp)}</div>
+                  {disc && <div style={{ fontSize: 8, color: '#9CA3AF', textDecoration: 'line-through' }}>{cur(p.price)}</div>}
+                </div>
+              </div>
+            );
+          })}
+          {filteredProducts.length > 50 && (
+            <div style={{ padding: '6px 10px', fontSize: 9, color: '#9CA3AF', textAlign: 'center', fontStyle: 'italic' }}>
+              Mostrando 50 de {filteredProducts.length} · afina la búsqueda para ver más
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Detalle del producto seleccionado */}
       {selProd && (
-        <div className="neu-card neu-pressed" style={{ padding: 10, marginBottom: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <div style={{ fontSize: 10, color: '#6B7280' }}>Precio unitario</div>
+        <div className="neu-card" style={{ padding: 12, marginBottom: 8, border: '2px solid #4A6FA5' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 9, color: '#4A6FA5', fontWeight: 700 }}>SELECCIONADO</div>
+              <div style={{ fontSize: 12, fontWeight: 700 }}>{selProd.name}</div>
+            </div>
             <div style={{ textAlign: 'right' }}>
               {selProd.discount > 0 && <div style={{ fontSize: 9, color: '#9CA3AF', textDecoration: 'line-through' }}>{cur(selProd.price)}</div>}
               <div style={{ fontSize: 14, fontWeight: 800, color: selProd.discount > 0 ? '#C0504E' : '#1A1D23' }}>{cur(effectivePrice(selProd))}</div>
@@ -1466,7 +1553,7 @@ function OrderForm({ products, onSave }) {
             </div>
           )}
           {selProdColors.length > 0 && (
-            <div>
+            <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 1 }}>Color</div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {selProdColors.map(c => (
@@ -1478,6 +1565,11 @@ function OrderForm({ products, onSave }) {
               </div>
             </div>
           )}
+
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>Cant.</div>
+            <input className="neu-input" type="number" min="1" value={qty} onChange={e => setQty(Number(e.target.value))} style={{ width: 60 }} />
+          </div>
         </div>
       )}
 
