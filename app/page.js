@@ -77,7 +77,13 @@ function buildExcel(products, orders, expenses, config, month, year) {
   }, 0);
   const ex = fe.reduce((a, x) => a + (x.amount || 0), 0);
   const nt = rv - cs - ex;
-  const biz = nt * 0.1, dist = nt - biz, s1 = dist * 0.5, s2 = dist * 0.5;
+  // Distribución: gastos salen primero del 10% de SPLENDORA; si no alcanza, socias cubren déficit 50/50
+  const gross = rv - cs;
+  const bizBase = gross * 0.10;
+  const socBase = gross * 0.45;
+  let biz, s1, s2;
+  if (ex <= bizBase) { biz = bizBase - ex; s1 = socBase; s2 = socBase; }
+  else { const d = (ex - bizBase) / 2; biz = 0; s1 = socBase - d; s2 = socBase - d; }
   const mk = (nm, h, rows) => `<Worksheet ss:Name="${nm}"><Table><Row>${h.map(x => `<Cell ss:StyleID="h"><Data ss:Type="String">${x}</Data></Cell>`).join('')}</Row>${rows}</Table></Worksheet>`;
   const period = month !== null ? `${MONTHS[month]} ${year}` : 'Todo';
   return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos recibidos')}${n(rv)}</Row><Row>${s('Costos (productos vendidos)')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Por cobrar')}${n(pc)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA (10%)')}${n(biz)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo u.', 'Precio u.', 'Stock', 'Inversión (costo×stock)', 'Valor venta (precio×stock)', 'Ganancia proy. (×stock)', 'Descuento %'], products.map(p => { const inv = (p.cost_total || 0) * (p.stock || 0); const val = (p.price || 0) * (p.stock || 0); const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0); return `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(inv)}${n(val)}${n(gp)}${n(p.discount)}</Row>`; }).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Productos', 'Total', 'Costo', 'Estado entrega', 'Estado pago', 'Abonado', 'Por cobrar', 'Notas pago'], fo.map(o => { const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0)); const ps = o.payment_status || 'pending'; return `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.city || '')}${s(o.channel)}${s((o.items || []).map(i => `${i.name} x${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}${s(PAYMENT_STATUS[ps]?.label || ps)}${n(o.amount_paid)}${n(ps === 'paid' ? 0 : due)}${s(o.payment_notes || '')}</Row>`; }).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
@@ -455,16 +461,35 @@ export default function HomePage() {
       if (ps === 'paid') return s;
       return s + Math.max(0, (o.total || 0) - (o.amount_paid || 0));
     }, 0);
+    const ex = filteredExpenses.reduce((s, e) => s + (e.amount || 0), 0);
+    const nt = rv - cs - ex;
+
+    // ── DISTRIBUCIÓN ──
+    // Regla: los gastos salen primero del 10% de SPLENDORA.
+    // Si el 10% no alcanza, las socias cubren el déficit 50/50.
+    const gross = rv - cs; // ganancia bruta antes de gastos
+    const bizBase = gross * 0.10;
+    const socBase = gross * 0.45;
+    let biz, s1, s2, deficitCoveredBySocia = 0, expensesAbsorbedByBiz = 0;
+    if (ex <= bizBase) {
+      // SPLENDORA absorbe todos los gastos
+      biz = bizBase - ex;
+      s1 = socBase;
+      s2 = socBase;
+      expensesAbsorbedByBiz = ex;
+    } else {
+      // El 10% no alcanzó → socias cubren el déficit 50/50
+      biz = 0;
+      const deficit = ex - bizBase;
+      deficitCoveredBySocia = deficit / 2;
+      s1 = socBase - deficitCoveredBySocia;
+      s2 = socBase - deficitCoveredBySocia;
+      expensesAbsorbedByBiz = bizBase;
+    }
+
     const paidOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'paid').length;
     const partialOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'partial').length;
     const pendingPayOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'pending').length;
-
-    const ex = filteredExpenses.reduce((s, e) => s + (e.amount || 0), 0);
-    const nt = rv - cs - ex;
-    const biz = nt * 0.10;
-    const dist = nt - biz;
-    const s1 = dist * 0.5;
-    const s2 = dist * 0.5;
 
     // Ganancia proyectada si se vende TODO el inventario actual
     // = Σ((precio - costo) × stock)
@@ -475,9 +500,12 @@ export default function HomePage() {
     const projS2 = projDist * 0.5;
 
     return {
-      ic, ir, dn, rv, cs, ex, nt, biz, s1, s2, pc,
+      ic, ir, dn, rv, cs, ex, nt, biz, s1, s2, pc, gross,
+      deficitCoveredBySocia, expensesAbsorbedByBiz,
       paidOrders, partialOrders, pendingPayOrders,
       projProfit, projBiz, projS1, projS2,
+      // Unidades totales vendidas en el periodo (suma de qty en items de pedidos no cancelados)
+      totalProductsSold: nonCanc.reduce((s, o) => s + (o.items || []).reduce((a, i) => a + (i.qty || 0), 0), 0),
       totalUnits: products.reduce((s, p) => s + (p.stock || 0), 0),
       low: products.filter(p => p.stock > 0 && p.stock <= 2),
       out: products.filter(p => p.stock === 0),
@@ -673,7 +701,7 @@ export default function HomePage() {
 
             {/* Resumen de pagos del periodo */}
             <div className="neu-card" style={{ padding: 10, marginBottom: 10 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6 }}>
                 <div style={{ textAlign: 'center', padding: 6, borderRadius: 8, background: '#D1FAE5' }}>
                   <div style={{ fontSize: 7, color: '#4A9E6B', fontWeight: 700, textTransform: 'uppercase' }}>Cobrado</div>
                   <div style={{ fontSize: 12, fontWeight: 800, color: '#4A9E6B', marginTop: 2 }}>{cur(m.rv)}</div>
@@ -686,6 +714,10 @@ export default function HomePage() {
                   <div style={{ fontSize: 7, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase' }}>Pedidos</div>
                   <div style={{ fontSize: 12, fontWeight: 800, marginTop: 2 }}>{filteredOrders.length}</div>
                 </div>
+                <div style={{ textAlign: 'center', padding: 6, borderRadius: 8, background: '#F0F2F5', boxShadow: 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF' }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase' }}>Productos</div>
+                  <div style={{ fontSize: 12, fontWeight: 800, marginTop: 2 }}>{m.totalProductsSold}</div>
+                </div>
               </div>
             </div>
 
@@ -695,12 +727,31 @@ export default function HomePage() {
               const ps = o.payment_status || 'pending';
               const psCfg = PAYMENT_STATUS[ps];
               const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0));
+              // Obtener foto principal de cada producto del pedido
+              const itemThumbs = (o.items || []).map(it => {
+                const prod = products.find(p => p.id === it.productId);
+                return { qty: it.qty, name: it.name, photo: prod?.photo_url };
+              });
               return (
               <div key={o.id} className="neu-card" style={{ padding: 14, marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 13 }}>{o.customer_name}{o.city ? <span style={{ fontSize: 10, color: '#6B7280', fontWeight: 500 }}> · 📍 {o.city}</span> : null}</div>
-                    <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>{(o.items || []).map(i => `${i.name} ×${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', ')}</div>
+                    {/* Miniaturas de productos */}
+                    {itemThumbs.length > 0 && (
+                      <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                        {itemThumbs.map((t, idx) => (
+                          <div key={idx} title={`${t.name} ×${t.qty}`} style={{ position: 'relative', width: 36, height: 36, borderRadius: 8, overflow: 'hidden', boxShadow: 'var(--raised-sm)', flexShrink: 0, background: '#E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {t.photo
+                              ? <img src={t.photo} alt={t.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              : <span style={{ fontSize: 14, color: '#9CA3AF' }}>📦</span>
+                            }
+                            {t.qty > 1 && <span style={{ position: 'absolute', bottom: 0, right: 0, background: '#1A1D23', color: '#FFF', fontSize: 8, fontWeight: 800, padding: '1px 4px', borderTopLeftRadius: 6 }}>×{t.qty}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 10, color: '#6B7280', marginTop: 4 }}>{(o.items || []).map(i => `${i.name} ×${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', ')}</div>
                     <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 2 }}>{o.channel} · {new Date(o.created_at).toLocaleDateString('es-CO')}</div>
                     {o.payment_notes && <div style={{ fontSize: 9, color: '#6B7280', marginTop: 3, fontStyle: 'italic' }}>📝 {o.payment_notes}</div>}
                   </div>
@@ -810,18 +861,19 @@ export default function HomePage() {
 
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
                 {[
-                  { n: 'SPLENDORA', p: '10%', v: m.biz, c: '#4A6FA5' },
-                  { n: config.partner1, p: '45%', v: m.s1 },
-                  { n: config.partner2, p: '45%', v: m.s2 },
+                  { n: 'SPLENDORA', p: '10%', v: m.biz, c: '#4A6FA5', sub: m.expensesAbsorbedByBiz > 0 ? `Absorbió ${cur(m.expensesAbsorbedByBiz)} en gastos` : null },
+                  { n: config.partner1, p: '45%', v: m.s1, sub: m.deficitCoveredBySocia > 0 ? `Cubrió ${cur(m.deficitCoveredBySocia)} de déficit` : null },
+                  { n: config.partner2, p: '45%', v: m.s2, sub: m.deficitCoveredBySocia > 0 ? `Cubrió ${cur(m.deficitCoveredBySocia)} de déficit` : null },
                 ].map((x, i) => (
                   <div key={i} className="neu-card" style={{ flex: 1, textAlign: 'center', padding: 10 }}>
                     <div style={{ fontSize: 8, color: '#6B7280' }}>{x.n} ({x.p})</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, marginTop: 3, color: x.c || '#4A6FA5' }}>{cur(x.v)}</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, marginTop: 3, color: x.v < 0 ? '#C0504E' : (x.c || '#4A6FA5') }}>{cur(x.v)}</div>
+                    {x.sub && <div style={{ fontSize: 7, color: '#9CA3AF', marginTop: 3, lineHeight: 1.3 }}>{x.sub}</div>}
                   </div>
                 ))}
               </div>
               <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, textAlign: 'center', fontStyle: 'italic' }}>
-                * Los ingresos solo cuentan pagos recibidos (pagados completos + abonos)
+                * Ingresos = pagos recibidos. Gastos salen primero del 10% de SPLENDORA; si no alcanza, las socias cubren el déficit 50/50.
               </div>
             </div>
 
