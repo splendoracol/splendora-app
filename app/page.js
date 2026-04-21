@@ -239,7 +239,7 @@ export default function HomePage() {
   const [orders, setOrders] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [config, setConfig] = useState({ partner1: 'DahiannaGs', partner2: 'Estelasuarez', split: 50, business_split: 10 });
-  const [catCfg, setCatCfg] = useState({ banner_text: '', banner_image: '', banner_active: false, instagram_url: '', whatsapp_number: '', logo_url: '' });
+  const [catCfg, setCatCfg] = useState({ banner_text: '', banner_image: '', banner_active: false, instagram_url: '', whatsapp_number: '', logo_url: '', share_image_url: '' });
   const [showProd, setShowProd] = useState(false);
   const [editProd, setEditProd] = useState(null);
   const [showOrd, setShowOrd] = useState(false);
@@ -1734,6 +1734,7 @@ function CatCfgForm({ cfg, onSave }) {
   const [uploading, setUploading] = useState(false);
   const logoRef = useRef(null);
   const bannerRef = useRef(null);
+  const shareRef = useRef(null);
 
   async function handleUpload(field, e) {
     const file = e.target.files?.[0];
@@ -1766,6 +1767,29 @@ function CatCfgForm({ cfg, onSave }) {
           </div>
           <input ref={logoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleUpload('logo_url', e)} />
           {c.logo_url && <button className="neu-btn neu-btn-sm" onClick={() => setC({ ...c, logo_url: '' })}>Quitar</button>}
+        </div>
+      </div>
+
+      {/* SHARE PREVIEW IMAGE */}
+      <div style={{ marginBottom: 16 }}>
+        <label className="label">Imagen de preview (al compartir link del catálogo)</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div onClick={() => shareRef.current?.click()} style={{
+            width: 160, height: 84, borderRadius: 10, cursor: 'pointer', overflow: 'hidden',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: c.share_image_url ? 'var(--raised-sm)' : 'var(--pressed)',
+          }}>
+            {c.share_image_url
+              ? <img src={c.share_image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              : <div style={{ color: '#9CA3AF', fontSize: 10, textAlign: 'center', padding: 4 }}>{uploading ? '...' : '+ Subir imagen'}</div>
+            }
+          </div>
+          <input ref={shareRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleUpload('share_image_url', e)} />
+          {c.share_image_url && <button className="neu-btn neu-btn-sm" onClick={() => setC({ ...c, share_image_url: '' })}>Quitar</button>}
+        </div>
+        <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 6, lineHeight: 1.4 }}>
+          📲 Esta foto aparece cuando compartes el link del catálogo en WhatsApp, Instagram, etc.<br/>
+          Tamaño recomendado: 1200×630 px (horizontal).
         </div>
       </div>
 
