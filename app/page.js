@@ -68,16 +68,26 @@ function buildExcel(products, orders, expenses, config, month, year) {
   const pc = Math.max(0, rv - cashReceived);
   const ex = fe.reduce((a, x) => a + (x.amount || 0), 0);
   const nt = rv - cs - ex;
-  // Distribución: gastos salen primero del 10% de SPLENDORA; si no alcanza, socias cubren déficit 50/50
+  // Reserva SPLENDORA = Σ((bolsa + envío) × qty vendida) por cada item de cada pedido no cancelado
+  const splendoraReserve = nonCanc.reduce((acc, o) => {
+    return acc + (o.items || []).reduce((a, it) => {
+      const prod = products.find(p => p.id === it.productId);
+      if (!prod) return a;
+      return a + ((prod.cost_bag || 0) + (prod.cost_shipping || 0)) * (it.qty || 0);
+    }, 0);
+  }, 0);
+  // Distribución: primero se aparta reserva, luego 10/45/45, gastos salen del 10%
   const gross = rv - cs;
-  const bizBase = gross * 0.10;
-  const socBase = gross * 0.45;
+  const distributable = Math.max(0, gross - splendoraReserve);
+  const bizBase = distributable * 0.10;
+  const socBase = distributable * 0.45;
   let biz, s1, s2;
   if (ex <= bizBase) { biz = bizBase - ex; s1 = socBase; s2 = socBase; }
   else { const d = (ex - bizBase) / 2; biz = 0; s1 = socBase - d; s2 = socBase - d; }
+  const bizTotal = splendoraReserve + biz;
   const mk = (nm, h, rows) => `<Worksheet ss:Name="${nm}"><Table><Row>${h.map(x => `<Cell ss:StyleID="h"><Data ss:Type="String">${x}</Data></Cell>`).join('')}</Row>${rows}</Table></Worksheet>`;
   const period = month !== null ? `${MONTHS[month]} ${year}` : 'Todo';
-  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos (ventas)')}${n(rv)}</Row><Row>${s('Cobrado')}${n(cashReceived)}</Row><Row>${s('Por cobrar')}${n(pc)}</Row><Row>${s('Costos (productos vendidos)')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA (10%)')}${n(biz)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo u.', 'Precio u.', 'Stock', 'Inversión (costo×stock)', 'Valor venta (precio×stock)', 'Ganancia proy. (×stock)', 'Descuento %'], products.map(p => { const inv = (p.cost_total || 0) * (p.stock || 0); const val = (p.price || 0) * (p.stock || 0); const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0); return `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(inv)}${n(val)}${n(gp)}${n(p.discount)}</Row>`; }).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Productos', 'Total', 'Costo', 'Estado entrega', 'Estado pago', 'Abonado', 'Por cobrar', 'Notas pago'], fo.map(o => { const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0)); const ps = o.payment_status || 'pending'; return `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.city || '')}${s(o.channel)}${s((o.items || []).map(i => `${i.name} x${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}${s(PAYMENT_STATUS[ps]?.label || ps)}${n(o.amount_paid)}${n(ps === 'paid' ? 0 : due)}${s(o.payment_notes || '')}</Row>`; }).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
+  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos (ventas)')}${n(rv)}</Row><Row>${s('Cobrado')}${n(cashReceived)}</Row><Row>${s('Por cobrar')}${n(pc)}</Row><Row>${s('Costos (productos vendidos)')}${n(cs)}</Row><Row>${s('Reserva SPLENDORA (bolsa+envío)')}${n(splendoraReserve)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA total (reserva + 10%)')}${n(bizTotal)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo u.', 'Precio u.', 'Stock', 'Inversión (costo×stock)', 'Valor venta (precio×stock)', 'Ganancia proy. (×stock)', 'Descuento %'], products.map(p => { const inv = (p.cost_total || 0) * (p.stock || 0); const val = (p.price || 0) * (p.stock || 0); const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0); return `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(inv)}${n(val)}${n(gp)}${n(p.discount)}</Row>`; }).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Productos', 'Total', 'Costo', 'Estado entrega', 'Estado pago', 'Abonado', 'Por cobrar', 'Notas pago'], fo.map(o => { const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0)); const ps = o.payment_status || 'pending'; return `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.city || '')}${s(o.channel)}${s((o.items || []).map(i => `${i.name} x${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}${s(PAYMENT_STATUS[ps]?.label || ps)}${n(o.amount_paid)}${n(ps === 'paid' ? 0 : due)}${s(o.payment_notes || '')}</Row>`; }).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
 }
 
 function dlExcel(p, o, e, c, month, year) {
@@ -466,21 +476,36 @@ export default function HomePage() {
     const ex = filteredExpenses.reduce((s, e) => s + (e.amount || 0), 0);
     const nt = rv - cs - ex;
 
+    // ── RESERVA DE SPLENDORA ──
+    // Por cada producto vendido, la bolsa + envío se apartan para SPLENDORA
+    // (es plata para reponer supplies de la marca, no entra a la distribución).
+    // Se calcula multiplicando (cost_bag + cost_shipping) × qty vendida de cada producto.
+    const splendoraReserve = nonCanc.reduce((acc, o) => {
+      return acc + (o.items || []).reduce((a, it) => {
+        const prod = products.find(p => p.id === it.productId);
+        if (!prod) return a;
+        const perUnit = (prod.cost_bag || 0) + (prod.cost_shipping || 0);
+        return a + perUnit * (it.qty || 0);
+      }, 0);
+    }, 0);
+
     // ── DISTRIBUCIÓN ──
-    // Regla: los gastos salen primero del 10% de SPLENDORA.
+    // Regla: primero se separa la reserva de SPLENDORA (bolsa + envío).
+    // Luego, de la ganancia bruta RESTANTE se aplica 10% / 45% / 45%.
+    // Los gastos salen primero del 10% de SPLENDORA.
     // Si el 10% no alcanza, las socias cubren el déficit 50/50.
-    const gross = rv - cs; // ganancia bruta antes de gastos
-    const bizBase = gross * 0.10;
-    const socBase = gross * 0.45;
+    // La reserva NO se usa para cubrir déficit (es plata comprometida a reposiciones).
+    const gross = rv - cs; // ganancia bruta total antes de apartar reserva y gastos
+    const distributable = Math.max(0, gross - splendoraReserve); // base para la división
+    const bizBase = distributable * 0.10;
+    const socBase = distributable * 0.45;
     let biz, s1, s2, deficitCoveredBySocia = 0, expensesAbsorbedByBiz = 0;
     if (ex <= bizBase) {
-      // SPLENDORA absorbe todos los gastos
       biz = bizBase - ex;
       s1 = socBase;
       s2 = socBase;
       expensesAbsorbedByBiz = ex;
     } else {
-      // El 10% no alcanzó → socias cubren el déficit 50/50
       biz = 0;
       const deficit = ex - bizBase;
       deficitCoveredBySocia = deficit / 2;
@@ -488,21 +513,28 @@ export default function HomePage() {
       s2 = socBase - deficitCoveredBySocia;
       expensesAbsorbedByBiz = bizBase;
     }
+    // SPLENDORA total = reserva (bolsa+envío) + su 10% (o 0 si se consumió con gastos)
+    const bizTotal = splendoraReserve + biz;
 
     const paidOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'paid').length;
     const partialOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'partial').length;
     const pendingPayOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'pending').length;
 
     // Ganancia proyectada si se vende TODO el inventario actual
-    // = Σ((precio - costo) × stock)
-    const projProfit = products.reduce((s, p) => s + ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0), 0);
-    const projBiz = projProfit * 0.10;
-    const projDist = projProfit - projBiz;
-    const projS1 = projDist * 0.5;
-    const projS2 = projDist * 0.5;
+    // = Σ((precio - costo total) × stock)
+    // Pero ojo: la reserva (bolsa+envío) × stock también se aparta para SPLENDORA.
+    const projReserve = products.reduce((s, p) => s + ((p.cost_bag || 0) + (p.cost_shipping || 0)) * (p.stock || 0), 0);
+    const projGross = products.reduce((s, p) => s + ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0), 0);
+    const projDistributable = Math.max(0, projGross - projReserve);
+    const projProfit = projGross; // ganancia total bruta (informativa)
+    const projBizShare = projDistributable * 0.10;
+    const projBiz = projReserve + projBizShare; // SPLENDORA se queda con reserva + su 10%
+    const projS1 = projDistributable * 0.45;
+    const projS2 = projDistributable * 0.45;
 
     return {
-      ic, ir, dn, rv, cs, ex, nt, biz, s1, s2, pc, gross, cashReceived,
+      ic, ir, dn, rv, cs, ex, nt, biz, bizTotal, s1, s2, pc, gross, cashReceived,
+      splendoraReserve, distributable,
       deficitCoveredBySocia, expensesAbsorbedByBiz,
       paidOrders, partialOrders, pendingPayOrders,
       projProfit, projBiz, projS1, projS2,
@@ -559,7 +591,7 @@ export default function HomePage() {
                 { l: 'Inversión inventario', v: cur(m.ic), s: `${m.totalUnits} und · Valor venta: ${cur(m.ir)}`, c: '#4A6FA5' },
                 { l: 'Por cobrar', v: cur(m.pc), s: `${m.partialOrders} abono · ${m.pendingPayOrders} pend.`, c: m.pc > 0 ? '#D4A843' : '#9CA3AF' },
                 { l: 'Ingresos (ventas)', v: cur(m.rv), s: `Cobrado: ${cur(m.cashReceived)}`, c: '#4A9E6B' },
-                { l: 'Ganancia neta', v: cur(m.nt), s: `SPLENDORA: ${cur(m.biz)}`, c: m.nt >= 0 ? '#4A9E6B' : '#C0504E' },
+                { l: 'Ganancia neta', v: cur(m.nt), s: `SPLENDORA: ${cur(m.bizTotal)}`, c: m.nt >= 0 ? '#4A9E6B' : '#C0504E' },
               ].map((x, i) => (
                 <div key={i} className="neu-card" style={{ padding: 14 }}>
                   <div style={{ fontSize: 9, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 700, marginBottom: 7 }}>{x.l}</div>
@@ -579,13 +611,14 @@ export default function HomePage() {
               {dashSocias && (
                 <div style={{ display: 'flex', gap: 8 }}>
                   {[
-                    { n: 'SPLENDORA', p: '10%', v: m.biz, c: '#4A6FA5' },
+                    { n: 'SPLENDORA', p: '10% + reserva', v: m.bizTotal, c: '#4A6FA5', sub: m.splendoraReserve > 0 ? `Reserva: ${cur(m.splendoraReserve)}` : null },
                     { n: config.partner1, p: '45%', v: m.s1, c: '#1A1D23' },
                     { n: config.partner2, p: '45%', v: m.s2, c: '#1A1D23' },
                   ].map((x, i) => (
                     <div key={i} className="neu-card neu-pressed" style={{ flex: 1, textAlign: 'center', padding: 10 }}>
                       <div style={{ fontSize: 8, color: '#6B7280' }}>{x.n} ({x.p})</div>
                       <div style={{ fontSize: 13, fontWeight: 800, marginTop: 4, color: x.c }}>{cur(x.v)}</div>
+                      {x.sub && <div style={{ fontSize: 7, color: '#9CA3AF', marginTop: 3 }}>{x.sub}</div>}
                     </div>
                   ))}
                 </div>
@@ -890,7 +923,10 @@ export default function HomePage() {
 
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
                 {[
-                  { n: 'SPLENDORA', p: '10%', v: m.biz, c: '#4A6FA5', sub: m.expensesAbsorbedByBiz > 0 ? `Absorbió ${cur(m.expensesAbsorbedByBiz)} en gastos` : null },
+                  { n: 'SPLENDORA', p: '10% + reserva', v: m.bizTotal, c: '#4A6FA5', sub: [
+                    m.splendoraReserve > 0 ? `Reserva: ${cur(m.splendoraReserve)}` : null,
+                    m.expensesAbsorbedByBiz > 0 ? `Absorbió ${cur(m.expensesAbsorbedByBiz)} en gastos` : null,
+                  ].filter(Boolean).join(' · ') || null },
                   { n: config.partner1, p: '45%', v: m.s1, sub: m.deficitCoveredBySocia > 0 ? `Cubrió ${cur(m.deficitCoveredBySocia)} de déficit` : null },
                   { n: config.partner2, p: '45%', v: m.s2, sub: m.deficitCoveredBySocia > 0 ? `Cubrió ${cur(m.deficitCoveredBySocia)} de déficit` : null },
                 ].map((x, i) => (
@@ -902,8 +938,9 @@ export default function HomePage() {
                 ))}
               </div>
               <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, textAlign: 'center', fontStyle: 'italic', lineHeight: 1.5 }}>
-                * Ingresos = ventas del periodo (cobradas o no). Ganancia neta = ingresos − costos − gastos.<br/>
-                Gastos salen primero del 10% de SPLENDORA; si no alcanza, socias cubren el déficit 50/50.
+                * Ingresos = ventas del periodo. Ganancia neta = ingresos − costos − gastos.<br/>
+                De cada producto vendido, bolsa + envío se aparta como reserva de SPLENDORA (para reponer supplies).<br/>
+                Del resto se distribuye 10% SPLENDORA / 45% cada socia. Gastos salen del 10%; si no alcanza, socias cubren 50/50.
               </div>
             </div>
 
