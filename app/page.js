@@ -990,9 +990,9 @@ export default function HomePage() {
                     </div>
                     <button className="neu-btn neu-btn-sm" style={{ width: '100%', marginTop: 6, fontSize: 9, padding: '5px 8px' }}
                       onClick={() => {
-                        const url = `${window.location.origin}/catalogo?code=${encodeURIComponent(p.code)}`;
+                        const url = `${window.location.origin}/producto/${encodeURIComponent(p.code)}`;
                         navigator.clipboard?.writeText(url);
-                        alert('🔗 Link del producto copiado:\n' + url);
+                        alert('🔗 Link copiado (con preview para WhatsApp):\n' + url);
                       }}>
                       🔗 Copiar link
                     </button>

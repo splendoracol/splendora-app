@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import Image from 'next/image';
 import { supabase } from '../../lib/supabase';
 
 const CATEGORIES_FALLBACK = ["Blusas","Pantalones","Vestidos","Faldas","Conjuntos","Accesorios","Zapatos","Bolsos","Otro"];
@@ -10,14 +11,21 @@ function PhotoNav({ photos, big }) {
   if (!photos || photos.length === 0) return <span style={{ fontSize: big ? 60 : 44, color: '#D1D3D6' }}>+</span>;
   return (
     <div style={{ position: 'relative', width: '100%', height: big ? 320 : 180 }}>
-      <img src={photos[idx]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: big ? 14 : 12 }} />
+      <Image
+        src={photos[idx]}
+        alt=""
+        fill
+        sizes={big ? '(max-width: 600px) 100vw, 400px' : '(max-width: 600px) 50vw, 200px'}
+        style={{ objectFit: 'cover', borderRadius: big ? 14 : 12 }}
+        quality={80}
+      />
       {photos.length > 1 && (
         <>
           <button onClick={e => { e.stopPropagation(); setIdx(idx === 0 ? photos.length - 1 : idx - 1); }}
-            style={{ position: 'absolute', left: 6, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.45)', color: '#FFF', border: 'none', borderRadius: '50%', width: big ? 32 : 24, height: big ? 32 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
+            style={{ position: 'absolute', left: 6, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.45)', color: '#FFF', border: 'none', borderRadius: '50%', width: big ? 32 : 24, height: big ? 32 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>‹</button>
           <button onClick={e => { e.stopPropagation(); setIdx(idx === photos.length - 1 ? 0 : idx + 1); }}
-            style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.45)', color: '#FFF', border: 'none', borderRadius: '50%', width: big ? 32 : 24, height: big ? 32 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
-          <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 5 }}>
+            style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.45)', color: '#FFF', border: 'none', borderRadius: '50%', width: big ? 32 : 24, height: big ? 32 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>›</button>
+          <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 5, zIndex: 2 }}>
             {photos.map((_, i) => <div key={i} style={{ width: big ? 8 : 6, height: big ? 8 : 6, borderRadius: '50%', background: i === idx ? '#FFF' : 'rgba(255,255,255,0.5)', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />)}
           </div>
         </>
@@ -107,6 +115,7 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, selectedSiz
 function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors }) {
   if (cart.length === 0) return null;
   function sendAll() {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
     let msg = `Hola! Me interesan estos productos de SPLENDORA.COL:\n\n`;
     cart.forEach((p, i) => {
       const sz = sizes[p.id] || (p.sizes && p.sizes.length > 0 ? p.sizes[0] : p.size);
@@ -115,7 +124,7 @@ function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors }) {
       const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
       const pr = p.hide_price ? 'Consultar' : cur(fp);
       msg += `${i + 1}. *${p.name}*\n   Ref: ${p.code} · Talla: ${sz}${cl ? ` · Color: ${cl}` : ''}\n   Precio: ${pr}\n`;
-      if (p.photo_url) msg += `   Foto: ${p.photo_url}\n`;
+      msg += `   ${origin}/producto/${encodeURIComponent(p.code)}\n`;
       msg += '\n';
     });
     msg += `Total: ${cart.length} producto(s)\n\n¿Están disponibles? 🛍`;
@@ -132,8 +141,8 @@ function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors }) {
         const cl = colors[p.id] || (p.colors && p.colors.length > 0 ? p.colors[0] : p.color);
         return (
           <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: i < cart.length - 1 ? '1px solid #E5E7EB' : 'none' }}>
-            <div style={{ width: 40, height: 40, borderRadius: 8, overflow: 'hidden', flexShrink: 0 }}>
-              {p.photo_url ? <img src={p.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ width: '100%', height: '100%', background: '#E5E7EB' }} />}
+            <div style={{ position: 'relative', width: 40, height: 40, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: '#E5E7EB' }}>
+              {p.photo_url && <Image src={p.photo_url} alt="" fill sizes="40px" style={{ objectFit: 'cover' }} />}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 12 }}>{p.name}</div>
@@ -201,7 +210,9 @@ export default function CatalogoPage() {
     const disc = p.discount > 0;
     const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
     const pr = p.hide_price ? 'Consultar precio' : (disc ? `${cur(fp)} (antes ${cur(p.price)} - ${p.discount}% OFF)` : cur(p.price));
-    const msg = `Hola! Me interesa este producto de SPLENDORA.COL:\n\n*${p.name}*\nRef: ${p.code}\n${(p.categories || [p.category]).join(', ')}\nTalla: ${sz}\n${cl ? `Color: ${cl}\n` : ''}Precio: ${pr}\n${p.description || ''}\n${p.photo_url ? `\nFoto: ${p.photo_url}\n` : ''}\nEsta disponible?`;
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const link = `${origin}/producto/${encodeURIComponent(p.code)}`;
+    const msg = `Hola! Me interesa este producto de SPLENDORA.COL:\n\n*${p.name}*\nRef: ${p.code}\n${(p.categories || [p.category]).join(', ')}\nTalla: ${sz}\n${cl ? `Color: ${cl}\n` : ''}Precio: ${pr}\n${p.description || ''}\n\n${link}\n\nEsta disponible?`;
     window.open(`https://wa.me/${wa}?text=${encodeURIComponent(msg)}`, '_blank');
   }
 
@@ -213,7 +224,7 @@ export default function CatalogoPage() {
   if (loading) return (
     <div style={{ minHeight: '100vh', background: '#F0F2F5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Montserrat', sans-serif" }}>
       <div style={{ textAlign: 'center' }}>
-        {logo && <img src={logo} alt="" style={{ width: 50, marginBottom: 8 }} />}
+        {logo && <Image src={logo} alt="" width={50} height={50} style={{ objectFit: 'contain', marginBottom: 8 }} priority />}
         <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: 2 }}>SPLENDORA</div>
         <div style={{ fontSize: 9, color: '#9CA3AF', letterSpacing: 3, marginTop: 4 }}>Cargando...</div>
       </div>
@@ -226,7 +237,7 @@ export default function CatalogoPage() {
 
       {/* HEADER */}
       <div style={{ background: '#FFF', padding: '20px 20px 14px', textAlign: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-        {logo && <img src={logo} alt="SPLENDORA.COL" style={{ width: 50, height: 50, objectFit: 'contain', marginBottom: 6 }} />}
+        {logo && <Image src={logo} alt="SPLENDORA.COL" width={50} height={50} style={{ objectFit: 'contain', marginBottom: 6 }} priority />}
         <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: 3 }}>SPLENDORA</div>
         <div style={{ fontSize: 8, color: '#9CA3AF', letterSpacing: 5, marginTop: 1 }}>C O L</div>
         <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 10 }}>
@@ -238,7 +249,7 @@ export default function CatalogoPage() {
       {/* BANNER */}
       {cfg && cfg.banner_active && (cfg.banner_text || cfg.banner_image) && (
         <div style={{ position: 'relative', overflow: 'hidden' }}>
-          {cfg.banner_image && <div style={{ width: '100%', height: 180, overflow: 'hidden' }}><img src={cfg.banner_image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>}
+          {cfg.banner_image && <div style={{ position: 'relative', width: '100%', height: 180, overflow: 'hidden' }}><Image src={cfg.banner_image} alt="" fill sizes="100vw" style={{ objectFit: 'cover' }} priority /></div>}
           {cfg.banner_text && <div style={{ ...(cfg.banner_image ? { position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', padding: '24px 20px 16px' } : { background: 'linear-gradient(135deg, #1A1D23, #2D3748)', padding: '16px 20px' }), textAlign: 'center' }}><div style={{ color: '#FFF', fontSize: 14, fontWeight: 700 }}>{cfg.banner_text}</div></div>}
         </div>
       )}
@@ -351,7 +362,7 @@ export default function CatalogoPage() {
 
       {/* FOOTER */}
       <div style={{ textAlign: 'center', padding: '24px 20px 32px', background: '#FFF', marginTop: 20 }}>
-        {logo && <img src={logo} alt="" style={{ width: 40, height: 40, objectFit: 'contain', marginBottom: 8 }} />}
+        {logo && <Image src={logo} alt="" width={40} height={40} style={{ objectFit: 'contain', marginBottom: 8 }} />}
         <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: 2, marginBottom: 4 }}>SPLENDORA</div>
         <div style={{ fontSize: 8, color: '#9CA3AF', letterSpacing: 4, marginBottom: 14 }}>C O L</div>
         <div style={{ display: 'flex', justifyContent: 'center', gap: 20 }}>
