@@ -32,7 +32,7 @@ export async function generateMetadata({ params }) {
     .eq('code', code)
     .maybeSingle();
 
-  if (!p) {
+  if (!p || p.archived) {
     return {
       title: 'Producto no encontrado — SPLENDORA.COL',
       description: 'Este producto ya no está disponible.',

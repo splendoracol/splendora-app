@@ -178,7 +178,7 @@ export default function CatalogoPage() {
   useEffect(() => {
     (async () => {
       const [{ data: p }, { data: c }, { data: cats }] = await Promise.all([
-        supabase.from('products').select('*').gt('stock', 0).order('created_at', { ascending: false }),
+        supabase.from('products').select('*').gt('stock', 0).or('archived.is.null,archived.eq.false').order('created_at', { ascending: false }),
         supabase.from('catalog_config').select('*').eq('id', 1).single(),
         supabase.from('categories').select('name').order('name'),
       ]);
