@@ -736,7 +736,7 @@ export default function HomePage() {
 
     // ── HOJA 2: INVENTARIO ──
     const invHeaders = ['Código', 'Nombre', 'Categorías', 'Tallas', 'Colores', 'Costo producto', 'Bolsa', 'Envío', 'Costo total u.', 'Precio venta u.', 'Descuento %', 'Stock', 'Inversión', 'Valor venta', 'Ganancia proy.', 'Precio oculto'];
-    const invData = [invHeaders, ...[...products].sort((a, b) => (a.code || '').localeCompare(b.code || '')).map(p => {
+    const invRows = [...products].sort((a, b) => (a.code || '').localeCompare(b.code || '')).map(p => {
       const inv = (p.cost_total || 0) * (p.stock || 0);
       const val = (p.price || 0) * (p.stock || 0);
       const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0);
@@ -749,7 +749,14 @@ export default function HomePage() {
         p.stock || 0, inv, val, gp,
         p.hide_price ? 'Sí' : 'No',
       ];
-    })];
+    });
+    // Fila de totales para inventario
+    const invTotalRow = [
+      `TOTALES · ${products.length} productos`, '', '', '', '',
+      '', '', '', '', '', '',
+      m.totalUnits, m.ic, m.ir, m.projProfit, '',
+    ];
+    const invData = [invHeaders, ...invRows, invTotalRow];
     const wsInv = XLSX.utils.aoa_to_sheet(invData);
     wsInv['!cols'] = [
       { wch: 15 }, { wch: 26 }, { wch: 18 }, { wch: 14 }, { wch: 18 },
@@ -1505,6 +1512,23 @@ export default function HomePage() {
                                   </tr>
                                 );
                               })}
+                              {/* Fila de totales inventario */}
+                              <tr style={{ background: '#1A1D23', color: '#FFF', fontWeight: 800 }}>
+                                <td colSpan={2} style={{ padding: '10px 6px', textAlign: 'right', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase' }}>TOTALES · {products.length} productos</td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right' }}>{m.totalUnits}</td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right', color: '#A8C4E0' }}>{cur(m.ic)}</td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right', color: '#86EFAC' }}>{cur(m.ir)}</td>
+                              </tr>
+                              <tr style={{ background: '#2D3748', color: '#FFF', fontWeight: 700, fontSize: 9 }}>
+                                <td colSpan={10} style={{ padding: '6px 10px', textAlign: 'center', letterSpacing: 0.3 }}>
+                                  Ganancia potencial si se vende todo el inventario: <span style={{ color: '#86EFAC', fontWeight: 800 }}>{cur(m.projProfit)}</span>
+                                </td>
+                              </tr>
                             </tbody>
                           </table>
                         </div>
