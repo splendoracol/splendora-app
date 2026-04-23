@@ -271,6 +271,12 @@ export default function HomePage() {
   // Colapsables de finanzas
   const [finChart, setFinChart] = useState(true);
   const [finGastos, setFinGastos] = useState(true);
+  // Colapsables de tablas
+  const [tblPedidos, setTblPedidos] = useState(true);
+  const [tblInventario, setTblInventario] = useState(false);
+  // Registro de "pagado a socia" por item de pedido
+  // estructura: { "orderId_itemIdx_s1": true/false, ... }
+  const [payouts, setPayouts] = useState({});
 
   useEffect(() => {
     try {
@@ -279,11 +285,15 @@ export default function HomePage() {
       const st = localStorage.getItem('dash_stock');
       const fc = localStorage.getItem('fin_chart');
       const fg = localStorage.getItem('fin_gastos');
+      const tp = localStorage.getItem('tbl_pedidos');
+      const ti = localStorage.getItem('tbl_inventario');
       if (s !== null) setDashSocias(s === '1');
       if (p !== null) setDashProyeccion(p === '1');
       if (st !== null) setDashStock(st === '1');
       if (fc !== null) setFinChart(fc === '1');
       if (fg !== null) setFinGastos(fg === '1');
+      if (tp !== null) setTblPedidos(tp === '1');
+      if (ti !== null) setTblInventario(ti === '1');
     } catch {}
   }, []);
 
@@ -307,19 +317,42 @@ export default function HomePage() {
   }, []);
 
   async function loadAll() {
-    const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }, { data: cats }] = await Promise.all([
+    const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }, { data: cats }, { data: po }] = await Promise.all([
       supabase.from('products').select('*').order('created_at', { ascending: false }),
       supabase.from('orders').select('*').order('created_at', { ascending: false }),
       supabase.from('expenses').select('*').order('created_at', { ascending: false }),
       supabase.from('config').select('*').eq('id', 1).single(),
       supabase.from('catalog_config').select('*').eq('id', 1).single(),
       supabase.from('categories').select('name').order('name'),
+      supabase.from('partner_payouts').select('*'),
     ]);
     setProducts(p || []); setOrders(o || []); setExpenses(e || []);
     if (c) setConfig(c);
     if (cc) setCatCfg(cc);
     if (cats && cats.length > 0) setCategories(cats.map(x => x.name));
+    // Construir mapa de payouts: "orderId_itemIdx_partnerKey" -> true/false
+    const map = {};
+    (po || []).forEach(row => {
+      map[`${row.order_id}_${row.item_index}_${row.partner_key}`] = row.paid;
+    });
+    setPayouts(map);
     setLoading(false);
+  }
+
+  async function togglePayout(orderId, itemIdx, partnerKey) {
+    const key = `${orderId}_${itemIdx}_${partnerKey}`;
+    const currentlyPaid = !!payouts[key];
+    const nextPaid = !currentlyPaid;
+    // Upsert (insert or update)
+    const { error } = await supabase.from('partner_payouts').upsert({
+      order_id: orderId,
+      item_index: itemIdx,
+      partner_key: partnerKey,
+      paid: nextPaid,
+      paid_at: nextPaid ? new Date().toISOString() : null,
+    }, { onConflict: 'order_id,item_index,partner_key' });
+    if (error) { alert('Error al guardar: ' + error.message); return; }
+    setPayouts(prev => ({ ...prev, [key]: nextPaid }));
   }
 
   // Category CRUD
@@ -546,6 +579,117 @@ export default function HomePage() {
       pnd: filteredOrders.filter(o => o.status === 'pending' || o.status === 'confirmed'),
     };
   }, [products, filteredOrders, filteredExpenses]);
+
+  // ── TABLA DE PEDIDOS (una fila por producto dentro de cada pedido) ──
+  const ordersTable = useMemo(() => {
+    const rows = [];
+    const nonCanc = filteredOrders.filter(o => o.status !== 'cancelled');
+    nonCanc.forEach(o => {
+      const orderTotal = o.total || 0;
+      const amountPaid = o.amount_paid || 0;
+      const ps = o.payment_status || 'pending';
+      (o.items || []).forEach((it, idx) => {
+        const prod = products.find(p => p.id === it.productId);
+        const costPerUnit = prod ? (prod.cost_total || 0) : 0;
+        const bagShipPerUnit = prod ? ((prod.cost_bag || 0) + (prod.cost_shipping || 0)) : 0;
+        const priceUnit = it.priceUnit || 0;
+        const qty = it.qty || 0;
+        const subtotal = priceUnit * qty;
+        // Distribuir el pago del pedido proporcional al subtotal del item (sobre el subtotal productos)
+        const itemsSubtotal = (o.items || []).reduce((s, i) => s + ((i.priceUnit || 0) * (i.qty || 0)), 0);
+        const proportion = itemsSubtotal > 0 ? subtotal / itemsSubtotal : 0;
+        let paidOfItem = 0;
+        if (ps === 'paid') paidOfItem = subtotal;
+        else if (ps === 'partial') {
+          // El amount_paid incluye envío. Descontamos envío para no inflar el pago del producto.
+          const paymentToProducts = Math.max(0, amountPaid - (o.shipping_charge || 0));
+          paidOfItem = Math.min(subtotal, Math.round(paymentToProducts * proportion));
+        }
+        const dueOfItem = Math.max(0, subtotal - paidOfItem);
+        // Ganancia del item = (precio − costo) × qty. De eso, 10% SPLENDORA + 45% cada socia. Más reserva bolsa+envío para SPLENDORA.
+        const itemGross = (priceUnit - costPerUnit) * qty;
+        const reserve = bagShipPerUnit * qty;
+        const distributable = Math.max(0, itemGross - reserve);
+        const commissionS1 = Math.round(distributable * 0.45);
+        const commissionS2 = Math.round(distributable * 0.45);
+        const splendoraShare = Math.round(distributable * 0.10) + reserve;
+        const paidS1 = !!payouts[`${o.id}_${idx}_s1`];
+        const paidS2 = !!payouts[`${o.id}_${idx}_s2`];
+        rows.push({
+          orderId: o.id,
+          itemIdx: idx,
+          date: o.created_at,
+          customer: o.customer_name,
+          city: o.city || '',
+          channel: o.channel,
+          productName: it.name,
+          productCode: it.code,
+          size: it.size || '',
+          color: it.color || '',
+          qty,
+          costUnit: costPerUnit,
+          priceUnit,
+          subtotal,
+          paidOfItem,
+          dueOfItem,
+          paymentStatus: ps,
+          commissionS1,
+          commissionS2,
+          splendoraShare,
+          reserve,
+          paidS1,
+          paidS2,
+        });
+      });
+    });
+    return rows;
+  }, [filteredOrders, products, payouts]);
+
+  // Totales para la tabla
+  const ordersTableTotals = useMemo(() => {
+    const t = {
+      sales: 0, paid: 0, due: 0,
+      s1Total: 0, s1ToPay: 0,
+      s2Total: 0, s2ToPay: 0,
+      splendoraTotal: 0,
+    };
+    ordersTable.forEach(r => {
+      t.sales += r.subtotal;
+      t.paid += r.paidOfItem;
+      t.due += r.dueOfItem;
+      t.s1Total += r.commissionS1;
+      t.s2Total += r.commissionS2;
+      t.splendoraTotal += r.splendoraShare;
+      if (!r.paidS1) t.s1ToPay += r.commissionS1;
+      if (!r.paidS2) t.s2ToPay += r.commissionS2;
+    });
+    return t;
+  }, [ordersTable]);
+
+  // ── EXCEL DE TABLAS ──
+  function buildTablesExcel() {
+    const e = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const nc = v => `<Cell><Data ss:Type="Number">${v || 0}</Data></Cell>`;
+    const sc = v => `<Cell><Data ss:Type="String">${e(v)}</Data></Cell>`;
+    const mk = (nm, h, rows) => `<Worksheet ss:Name="${nm}"><Table><Row>${h.map(x => `<Cell ss:StyleID="h"><Data ss:Type="String">${x}</Data></Cell>`).join('')}</Row>${rows}</Table></Worksheet>`;
+    const period = fMonth !== null ? `${MONTHS[fMonth]} ${fYear}` : 'Todo';
+    const pedidosHeaders = ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Producto', 'Código', 'Talla', 'Color', 'Cantidad', 'Costo u.', 'Precio u.', 'Subtotal', 'Abonado', 'Por cobrar', 'Estado pago', `Com. ${config.partner1}`, `Pagado ${config.partner1}`, `Com. ${config.partner2}`, `Pagado ${config.partner2}`, 'SPLENDORA'];
+    const pedidosRows = ordersTable.map(r => `<Row>${sc(new Date(r.date).toLocaleDateString('es-CO'))}${sc(r.customer)}${sc(r.city)}${sc(r.channel)}${sc(r.productName)}${sc(r.productCode)}${sc(r.size)}${sc(r.color)}${nc(r.qty)}${nc(r.costUnit)}${nc(r.priceUnit)}${nc(r.subtotal)}${nc(r.paidOfItem)}${nc(r.dueOfItem)}${sc(PAYMENT_STATUS[r.paymentStatus]?.label || r.paymentStatus)}${nc(r.commissionS1)}${sc(r.paidS1 ? 'Sí' : 'No')}${nc(r.commissionS2)}${sc(r.paidS2 ? 'Sí' : 'No')}${nc(r.splendoraShare)}</Row>`).join('');
+    const invHeaders = ['Código', 'Nombre', 'Categorías', 'Tallas', 'Colores', 'Costo producto', 'Bolsa', 'Envío', 'Costo total u.', 'Precio venta u.', 'Descuento %', 'Stock', 'Inversión', 'Valor venta', 'Ganancia proy.', 'Precio oculto'];
+    const invRows = [...products].sort((a, b) => (a.code || '').localeCompare(b.code || '')).map(p => {
+      const inv = (p.cost_total || 0) * (p.stock || 0);
+      const val = (p.price || 0) * (p.stock || 0);
+      const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0);
+      return `<Row>${sc(p.code)}${sc(p.name)}${sc((p.categories || [p.category]).join(', '))}${sc((p.sizes || []).join(', ') || p.size)}${sc((p.colors || [p.color]).filter(Boolean).join(', '))}${nc(p.cost_product)}${nc(p.cost_bag)}${nc(p.cost_shipping)}${nc(p.cost_total)}${nc(p.price)}${nc(p.discount)}${nc(p.stock)}${nc(inv)}${nc(val)}${nc(gp)}${sc(p.hide_price ? 'Sí' : 'No')}</Row>`;
+    }).join('');
+    const gastosHeaders = ['Fecha', 'Descripción', 'Monto', 'Pagado por'];
+    const gastosRows = filteredExpenses.map(x => `<Row>${sc(new Date(x.created_at).toLocaleDateString('es-CO'))}${sc(x.description)}${nc(x.amount)}${sc(x.paid_by)}</Row>`).join('');
+    const xml = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles>${mk(`Pedidos ${period}`.slice(0, 31), pedidosHeaders, pedidosRows)}${mk('Inventario', invHeaders, invRows)}${mk(`Gastos ${period}`.slice(0, 31), gastosHeaders, gastosRows)}</Workbook>`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([xml], { type: 'application/vnd.ms-excel' }));
+    a.download = `SPLENDORA_TABLAS_${new Date().toISOString().slice(0, 10)}.xls`;
+    a.click();
+  }
 
   if (loading) {
     return (
@@ -1055,6 +1199,159 @@ export default function HomePage() {
                 {typeof window !== 'undefined' ? `${window.location.origin}/catalogo` : '/catalogo'}
               </div>
               <button className="neu-btn" style={{ width: '100%' }} onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/catalogo`); alert('¡Link copiado!'); }}>📋 Copiar link</button>
+            </div>
+
+            {/* ═══ TABLAS ═══ */}
+            <div className="neu-card" style={{ marginBottom: 12, padding: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800 }}>📊 Tablas</div>
+                  <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>Resumen detallado para contabilidad</div>
+                </div>
+                <button className="neu-btn neu-btn-accent neu-btn-sm" onClick={buildTablesExcel}>⬇ Excel</button>
+              </div>
+
+              <MonthFilter month={fMonth} year={fYear} onChange={(mm, y) => { setFMonth(mm); setFYear(y); }} />
+
+              {/* Totales */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
+                <div className="neu-card neu-pressed" style={{ padding: 8 }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Ventas del periodo</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#4A9E6B', marginTop: 2 }}>{cur(ordersTableTotals.sales)}</div>
+                  <div style={{ fontSize: 8, color: '#9CA3AF', marginTop: 2 }}>Cobrado: {cur(ordersTableTotals.paid)} · Por cobrar: {cur(ordersTableTotals.due)}</div>
+                </div>
+                <div className="neu-card neu-pressed" style={{ padding: 8 }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>SPLENDORA</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#4A6FA5', marginTop: 2 }}>{cur(ordersTableTotals.splendoraTotal)}</div>
+                  <div style={{ fontSize: 8, color: '#9CA3AF', marginTop: 2 }}>Reserva + 10% del periodo</div>
+                </div>
+                <div className="neu-card neu-pressed" style={{ padding: 8 }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{config.partner1} (45%)</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2 }}>{cur(ordersTableTotals.s1Total)}</div>
+                  <div style={{ fontSize: 8, color: ordersTableTotals.s1ToPay > 0 ? '#D4A843' : '#4A9E6B', marginTop: 2, fontWeight: 700 }}>Por pagar: {cur(ordersTableTotals.s1ToPay)}</div>
+                </div>
+                <div className="neu-card neu-pressed" style={{ padding: 8 }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{config.partner2} (45%)</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2 }}>{cur(ordersTableTotals.s2Total)}</div>
+                  <div style={{ fontSize: 8, color: ordersTableTotals.s2ToPay > 0 ? '#D4A843' : '#4A9E6B', marginTop: 2, fontWeight: 700 }}>Por pagar: {cur(ordersTableTotals.s2ToPay)}</div>
+                </div>
+              </div>
+
+              {/* ── TABLA 1: PEDIDOS ── */}
+              <div style={{ borderRadius: 10, boxShadow: 'var(--raised-sm)', padding: 10, marginBottom: 10 }}>
+                <div onClick={() => toggleDash(setTblPedidos, tblPedidos, 'tbl_pedidos')}
+                  style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tblPedidos ? 10 : 0, userSelect: 'none' }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: '#1A1D23' }}>📋 Tabla 1 · Pedidos ({ordersTable.length} filas)</div>
+                  <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{tblPedidos ? '▾' : '▸'}</span>
+                </div>
+                {tblPedidos && (
+                  ordersTable.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 20, color: '#9CA3AF', fontSize: 11 }}>Sin pedidos en este periodo</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto', marginLeft: -10, marginRight: -10 }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, minWidth: 900 }}>
+                        <thead>
+                          <tr style={{ background: '#E8EAED' }}>
+                            {['Fecha', 'Cliente', 'Producto', 'Cant', 'Costo u.', 'Precio u.', 'Subtotal', 'Abonado', 'Por cobrar', 'Estado', `${config.partner1}`, `Pag.`, `${config.partner2}`, `Pag.`, 'SPLEND.'].map((h, i) => (
+                              <th key={i} style={{ padding: '6px 6px', textAlign: i === 3 || i > 3 ? 'right' : 'left', fontSize: 8, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ordersTable.map((r, idx) => {
+                            const psCfg = PAYMENT_STATUS[r.paymentStatus];
+                            return (
+                              <tr key={idx} style={{ borderBottom: '1px solid #E5E7EB' }}>
+                                <td style={{ padding: '6px 6px', whiteSpace: 'nowrap' }}>{new Date(r.date).toLocaleDateString('es-CO')}</td>
+                                <td style={{ padding: '6px 6px' }}>
+                                  <div style={{ fontWeight: 600 }}>{r.customer}</div>
+                                  {r.city && <div style={{ fontSize: 9, color: '#9CA3AF' }}>📍 {r.city}</div>}
+                                </td>
+                                <td style={{ padding: '6px 6px' }}>
+                                  <div>{r.productName}</div>
+                                  <div style={{ fontSize: 8, color: '#9CA3AF' }}>{r.productCode}{r.size ? ` · T:${r.size}` : ''}{r.color ? ` · ${r.color}` : ''}</div>
+                                </td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', fontWeight: 700 }}>{r.qty}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right' }}>{cur(r.costUnit)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right' }}>{cur(r.priceUnit)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', fontWeight: 700 }}>{cur(r.subtotal)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', color: '#4A9E6B' }}>{cur(r.paidOfItem)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', color: r.dueOfItem > 0 ? '#C0504E' : '#9CA3AF' }}>{cur(r.dueOfItem)}</td>
+                                <td style={{ padding: '6px 6px' }}>
+                                  <span style={{ padding: '2px 6px', borderRadius: 5, fontSize: 8, fontWeight: 700, color: psCfg.color, background: psCfg.bg, whiteSpace: 'nowrap' }}>{psCfg.icon} {psCfg.label}</span>
+                                </td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right' }}>{cur(r.commissionS1)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'center' }}>
+                                  <button onClick={() => togglePayout(r.orderId, r.itemIdx, 's1')}
+                                    title={r.paidS1 ? 'Marcado como pagado — clic para revertir' : 'Marcar como pagado'}
+                                    style={{ border: 'none', cursor: 'pointer', background: r.paidS1 ? '#4A9E6B' : '#F0F2F5', color: r.paidS1 ? '#FFF' : '#9CA3AF', padding: '3px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, boxShadow: r.paidS1 ? 'none' : 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF' }}>
+                                    {r.paidS1 ? '✓' : '○'}
+                                  </button>
+                                </td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right' }}>{cur(r.commissionS2)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'center' }}>
+                                  <button onClick={() => togglePayout(r.orderId, r.itemIdx, 's2')}
+                                    title={r.paidS2 ? 'Marcado como pagado — clic para revertir' : 'Marcar como pagado'}
+                                    style={{ border: 'none', cursor: 'pointer', background: r.paidS2 ? '#4A9E6B' : '#F0F2F5', color: r.paidS2 ? '#FFF' : '#9CA3AF', padding: '3px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, boxShadow: r.paidS2 ? 'none' : 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF' }}>
+                                    {r.paidS2 ? '✓' : '○'}
+                                  </button>
+                                </td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', color: '#4A6FA5', fontWeight: 700 }}>{cur(r.splendoraShare)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                )}
+              </div>
+
+              {/* ── TABLA 2: INVENTARIO ── */}
+              <div style={{ borderRadius: 10, boxShadow: 'var(--raised-sm)', padding: 10, marginBottom: 10 }}>
+                <div onClick={() => toggleDash(setTblInventario, tblInventario, 'tbl_inventario')}
+                  style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tblInventario ? 10 : 0, userSelect: 'none' }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: '#1A1D23' }}>📦 Tabla 2 · Inventario ({products.length} productos)</div>
+                  <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{tblInventario ? '▾' : '▸'}</span>
+                </div>
+                {tblInventario && (
+                  products.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 20, color: '#9CA3AF', fontSize: 11 }}>Sin productos</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto', marginLeft: -10, marginRight: -10 }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, minWidth: 850 }}>
+                        <thead>
+                          <tr style={{ background: '#E8EAED' }}>
+                            {['Código', 'Nombre', 'Categorías', 'Tallas', 'Costo u.', 'Precio u.', 'Desc.', 'Stock', 'Inversión', 'Valor venta'].map((h, i) => (
+                              <th key={i} style={{ padding: '6px 6px', textAlign: i >= 4 ? 'right' : 'left', fontSize: 8, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...products].sort((a, b) => (a.code || '').localeCompare(b.code || '')).map(p => {
+                            const inv = (p.cost_total || 0) * (p.stock || 0);
+                            const val = (p.price || 0) * (p.stock || 0);
+                            return (
+                              <tr key={p.id} style={{ borderBottom: '1px solid #E5E7EB' }}>
+                                <td style={{ padding: '6px 6px', fontWeight: 700, color: '#4A6FA5' }}>{p.code}</td>
+                                <td style={{ padding: '6px 6px' }}>{p.name}</td>
+                                <td style={{ padding: '6px 6px', fontSize: 9, color: '#6B7280' }}>{(p.categories || [p.category]).join(', ')}</td>
+                                <td style={{ padding: '6px 6px', fontSize: 9, color: '#6B7280' }}>{(p.sizes || []).join(', ') || p.size || '—'}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right' }}>{cur(p.cost_total)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right' }}>{cur(p.price)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', color: p.discount > 0 ? '#C0504E' : '#9CA3AF' }}>{p.discount || 0}%</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', fontWeight: 700, color: p.stock === 0 ? '#C0504E' : p.stock <= 2 ? '#D4A843' : '#4A9E6B' }}>{p.stock}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', color: '#4A6FA5' }}>{cur(inv)}</td>
+                                <td style={{ padding: '6px 6px', textAlign: 'right', color: '#4A9E6B' }}>{cur(val)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                )}
+              </div>
             </div>
 
             {/* CATEGORY MANAGEMENT */}
