@@ -244,7 +244,11 @@ function SalesChart({ orders }) {
 export default function HomePage() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('dashboard');
+  const [tab, setTabState] = useState('dashboard');
+  const setTab = (t) => {
+    setTabState(t);
+    try { localStorage.setItem('active_tab', t); } catch {}
+  };
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -291,6 +295,7 @@ export default function HomePage() {
       const ti = localStorage.getItem('tbl_inventario');
       const ts = localStorage.getItem('tbl_section');
       const tc = localStorage.getItem('tools_categorias');
+      const at = localStorage.getItem('active_tab');
       if (s !== null) setDashSocias(s === '1');
       if (p !== null) setDashProyeccion(p === '1');
       if (st !== null) setDashStock(st === '1');
@@ -300,6 +305,9 @@ export default function HomePage() {
       if (ti !== null) setTblInventario(ti === '1');
       if (ts !== null) setTblSection(ts === '1');
       if (tc !== null) setToolsCategorias(tc === '1');
+      if (at !== null && ['dashboard', 'inventory', 'orders', 'finances', 'catalog', 'tools'].includes(at)) {
+        setTabState(at);
+      }
     } catch {}
   }, []);
 
