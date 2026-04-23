@@ -621,6 +621,10 @@ export default function HomePage() {
         const splendoraShare = Math.round(distributable * 0.10) + reserve;
         const paidS1 = !!payouts[`${o.id}_${idx}_s1`];
         const paidS2 = !!payouts[`${o.id}_${idx}_s2`];
+        const paidSplendora = !!payouts[`${o.id}_${idx}_sp`];
+        const paidInversion = !!payouts[`${o.id}_${idx}_inv`];
+        // Inversión = costo total del producto (costo unidad × cantidad) — plata a devolver a la caja de reposición
+        const inversion = costPerUnit * qty;
         rows.push({
           orderId: o.id,
           itemIdx: idx,
@@ -642,9 +646,12 @@ export default function HomePage() {
           commissionS1,
           commissionS2,
           splendoraShare,
+          inversion,
           reserve,
           paidS1,
           paidS2,
+          paidSplendora,
+          paidInversion,
         });
       });
     });
@@ -654,20 +661,27 @@ export default function HomePage() {
   // Totales para la tabla
   const ordersTableTotals = useMemo(() => {
     const t = {
-      sales: 0, paid: 0, due: 0,
+      qty: 0, sales: 0, paid: 0, due: 0,
+      costTotal: 0,
       s1Total: 0, s1ToPay: 0,
       s2Total: 0, s2ToPay: 0,
-      splendoraTotal: 0,
+      splendoraTotal: 0, splendoraToReceive: 0,
+      inversionTotal: 0, inversionToRecover: 0,
     };
     ordersTable.forEach(r => {
+      t.qty += r.qty;
       t.sales += r.subtotal;
       t.paid += r.paidOfItem;
       t.due += r.dueOfItem;
+      t.costTotal += r.costUnit * r.qty;
       t.s1Total += r.commissionS1;
       t.s2Total += r.commissionS2;
       t.splendoraTotal += r.splendoraShare;
+      t.inversionTotal += r.inversion;
       if (!r.paidS1) t.s1ToPay += r.commissionS1;
       if (!r.paidS2) t.s2ToPay += r.commissionS2;
+      if (!r.paidSplendora) t.splendoraToReceive += r.splendoraShare;
+      if (!r.paidInversion) t.inversionToRecover += r.inversion;
     });
     return t;
   }, [ordersTable]);
@@ -689,22 +703,34 @@ export default function HomePage() {
     const period = fMonth !== null ? `${MONTHS[fMonth]} ${fYear}` : 'Todo';
 
     // ── HOJA 1: PEDIDOS ──
-    const pedidosHeaders = ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Producto', 'Código', 'Talla', 'Color', 'Cantidad', 'Costo u.', 'Precio u.', 'Subtotal', 'Abonado', 'Por cobrar', 'Estado pago', `Com. ${config.partner1}`, `Pagado ${config.partner1}`, `Com. ${config.partner2}`, `Pagado ${config.partner2}`, 'SPLENDORA'];
-    const pedidosData = [pedidosHeaders, ...ordersTable.map(r => [
+    const pedidosHeaders = ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Producto', 'Código', 'Talla', 'Color', 'Cantidad', 'Costo u.', 'Costo total', 'Precio u.', 'Subtotal', 'Abonado', 'Por cobrar', 'Estado pago', `Com. ${config.partner1}`, `Pagado ${config.partner1}`, `Com. ${config.partner2}`, `Pagado ${config.partner2}`, 'SPLENDORA', 'Recibido SPLENDORA', 'Inversión', 'Recuperada inversión'];
+    const pedidosRows = ordersTable.map(r => [
       new Date(r.date).toLocaleDateString('es-CO'),
       r.customer, r.city, r.channel, r.productName, r.productCode, r.size, r.color,
-      r.qty, r.costUnit, r.priceUnit, r.subtotal, r.paidOfItem, r.dueOfItem,
+      r.qty, r.costUnit, r.costUnit * r.qty, r.priceUnit, r.subtotal, r.paidOfItem, r.dueOfItem,
       PAYMENT_STATUS[r.paymentStatus]?.label || r.paymentStatus,
       r.commissionS1, r.paidS1 ? 'Sí' : 'No',
       r.commissionS2, r.paidS2 ? 'Sí' : 'No',
-      r.splendoraShare,
-    ])];
+      r.splendoraShare, r.paidSplendora ? 'Sí' : 'No',
+      r.inversion, r.paidInversion ? 'Sí' : 'No',
+    ]);
+    // Fila de totales
+    const totalesRow = [
+      'TOTALES', '', '', '', '', '', '', '',
+      ordersTableTotals.qty, '', ordersTableTotals.costTotal, '', ordersTableTotals.sales,
+      ordersTableTotals.paid, ordersTableTotals.due, '',
+      ordersTableTotals.s1Total, '',
+      ordersTableTotals.s2Total, '',
+      ordersTableTotals.splendoraTotal, '',
+      ordersTableTotals.inversionTotal, '',
+    ];
+    const pedidosData = [pedidosHeaders, ...pedidosRows, totalesRow];
     const wsPedidos = XLSX.utils.aoa_to_sheet(pedidosData);
     // Anchos de columnas
     wsPedidos['!cols'] = [
       { wch: 11 }, { wch: 20 }, { wch: 14 }, { wch: 11 }, { wch: 26 }, { wch: 15 }, { wch: 7 }, { wch: 12 },
-      { wch: 9 }, { wch: 11 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 12 },
-      { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 13 },
+      { wch: 9 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 12 },
+      { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 13 }, { wch: 18 }, { wch: 12 }, { wch: 20 },
     ];
     XLSX.utils.book_append_sheet(wb, wsPedidos, `Pedidos ${period}`.slice(0, 31));
 
@@ -746,14 +772,21 @@ export default function HomePage() {
     const resumenData = [
       ['Concepto', 'Valor'],
       ['Periodo', period],
+      ['Unidades vendidas', ordersTableTotals.qty],
       ['Ventas', ordersTableTotals.sales],
       ['Cobrado', ordersTableTotals.paid],
       ['Por cobrar', ordersTableTotals.due],
+      ['Costo total productos', ordersTableTotals.costTotal],
+      ['', ''],
       [`Comisión total ${config.partner1}`, ordersTableTotals.s1Total],
       [`Por pagar a ${config.partner1}`, ordersTableTotals.s1ToPay],
       [`Comisión total ${config.partner2}`, ordersTableTotals.s2Total],
       [`Por pagar a ${config.partner2}`, ordersTableTotals.s2ToPay],
+      ['', ''],
       ['SPLENDORA (reserva + 10%)', ordersTableTotals.splendoraTotal],
+      ['Por recibir SPLENDORA', ordersTableTotals.splendoraToReceive],
+      ['Caja inversión (reposición)', ordersTableTotals.inversionTotal],
+      ['Por recuperar en caja inversión', ordersTableTotals.inversionToRecover],
     ];
     const wsRes = XLSX.utils.aoa_to_sheet(resumenData);
     wsRes['!cols'] = [{ wch: 32 }, { wch: 16 }];
@@ -1301,9 +1334,19 @@ export default function HomePage() {
                       <div style={{ fontSize: 8, color: '#9CA3AF', marginTop: 2 }}>Cobrado: {cur(ordersTableTotals.paid)} · Por cobrar: {cur(ordersTableTotals.due)}</div>
                     </div>
                     <div className="neu-card neu-pressed" style={{ padding: 8 }}>
+                      <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Caja inversión (reposición)</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#1A1D23', marginTop: 2 }}>{cur(ordersTableTotals.inversionTotal)}</div>
+                      <div style={{ fontSize: 8, color: ordersTableTotals.inversionToRecover > 0 ? '#D4A843' : '#4A9E6B', marginTop: 2, fontWeight: 700 }}>Por recuperar: {cur(ordersTableTotals.inversionToRecover)}</div>
+                    </div>
+                    <div className="neu-card neu-pressed" style={{ padding: 8 }}>
                       <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>SPLENDORA</div>
                       <div style={{ fontSize: 13, fontWeight: 800, color: '#4A6FA5', marginTop: 2 }}>{cur(ordersTableTotals.splendoraTotal)}</div>
-                      <div style={{ fontSize: 8, color: '#9CA3AF', marginTop: 2 }}>Reserva + 10% del periodo</div>
+                      <div style={{ fontSize: 8, color: ordersTableTotals.splendoraToReceive > 0 ? '#D4A843' : '#4A9E6B', marginTop: 2, fontWeight: 700 }}>Por recibir: {cur(ordersTableTotals.splendoraToReceive)}</div>
+                    </div>
+                    <div className="neu-card neu-pressed" style={{ padding: 8 }}>
+                      <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Totales</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, marginTop: 2 }}>{ordersTableTotals.qty} unidades</div>
+                      <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 2 }}>Costo: {cur(ordersTableTotals.costTotal)}</div>
                     </div>
                     <div className="neu-card neu-pressed" style={{ padding: 8 }}>
                       <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{config.partner1} (45%)</div>
@@ -1331,10 +1374,10 @@ export default function HomePage() {
                         <div style={{ textAlign: 'center', padding: 20, color: '#9CA3AF', fontSize: 11 }}>Sin pedidos en este periodo</div>
                       ) : (
                         <div style={{ overflowX: 'auto', marginLeft: -10, marginRight: -10 }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, minWidth: 900 }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, minWidth: 1100 }}>
                             <thead>
                               <tr style={{ background: '#E8EAED' }}>
-                                {['Fecha', 'Cliente', 'Producto', 'Cant', 'Costo u.', 'Precio u.', 'Subtotal', 'Abonado', 'Por cobrar', 'Estado', `${config.partner1}`, `Pag.`, `${config.partner2}`, `Pag.`, 'SPLEND.'].map((h, i) => (
+                                {['Fecha', 'Cliente', 'Producto', 'Cant', 'Costo u.', 'Precio u.', 'Subtotal', 'Abonado', 'Por cobrar', 'Estado', `${config.partner1}`, 'Pag.', `${config.partner2}`, 'Pag.', 'SPLEND.', 'Pag.', 'INVERSIÓN', 'Pag.'].map((h, i) => (
                                   <th key={i} style={{ padding: '6px 6px', textAlign: i === 3 || i > 3 ? 'right' : 'left', fontSize: 8, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{h}</th>
                                 ))}
                               </tr>
@@ -1379,9 +1422,43 @@ export default function HomePage() {
                                       </button>
                                     </td>
                                     <td style={{ padding: '6px 6px', textAlign: 'right', color: '#4A6FA5', fontWeight: 700 }}>{cur(r.splendoraShare)}</td>
+                                    <td style={{ padding: '6px 6px', textAlign: 'center' }}>
+                                      <button onClick={() => togglePayout(r.orderId, r.itemIdx, 'sp')}
+                                        title={r.paidSplendora ? 'SPLENDORA recibió — clic para revertir' : 'Marcar como recibido por SPLENDORA'}
+                                        style={{ border: 'none', cursor: 'pointer', background: r.paidSplendora ? '#4A6FA5' : '#F0F2F5', color: r.paidSplendora ? '#FFF' : '#9CA3AF', padding: '3px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, boxShadow: r.paidSplendora ? 'none' : 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF' }}>
+                                        {r.paidSplendora ? '✓' : '○'}
+                                      </button>
+                                    </td>
+                                    <td style={{ padding: '6px 6px', textAlign: 'right', color: '#1A1D23', fontWeight: 700 }}>{cur(r.inversion)}</td>
+                                    <td style={{ padding: '6px 6px', textAlign: 'center' }}>
+                                      <button onClick={() => togglePayout(r.orderId, r.itemIdx, 'inv')}
+                                        title={r.paidInversion ? 'Inversión recuperada — clic para revertir' : 'Marcar inversión como recuperada'}
+                                        style={{ border: 'none', cursor: 'pointer', background: r.paidInversion ? '#1A1D23' : '#F0F2F5', color: r.paidInversion ? '#FFF' : '#9CA3AF', padding: '3px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, boxShadow: r.paidInversion ? 'none' : 'inset 2px 2px 4px #D1D3D6, inset -2px -2px 4px #FFFFFF' }}>
+                                        {r.paidInversion ? '✓' : '○'}
+                                      </button>
+                                    </td>
                                   </tr>
                                 );
                               })}
+                              {/* Fila de totales */}
+                              <tr style={{ background: '#1A1D23', color: '#FFF', fontWeight: 800 }}>
+                                <td colSpan={3} style={{ padding: '10px 6px', textAlign: 'right', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase' }}>TOTALES</td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right' }}>{ordersTableTotals.qty}</td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right' }}>{cur(ordersTableTotals.costTotal)}</td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right' }}>{cur(ordersTableTotals.sales)}</td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right', color: '#86EFAC' }}>{cur(ordersTableTotals.paid)}</td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right', color: '#FCA5A5' }}>{cur(ordersTableTotals.due)}</td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right' }}>{cur(ordersTableTotals.s1Total)}</td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right' }}>{cur(ordersTableTotals.s2Total)}</td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right', color: '#A8C4E0' }}>{cur(ordersTableTotals.splendoraTotal)}</td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                                <td style={{ padding: '10px 6px', textAlign: 'right' }}>{cur(ordersTableTotals.inversionTotal)}</td>
+                                <td style={{ padding: '10px 6px' }}></td>
+                              </tr>
                             </tbody>
                           </table>
                         </div>
