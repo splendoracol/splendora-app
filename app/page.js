@@ -280,6 +280,8 @@ export default function HomePage() {
   const [tblPedidos, setTblPedidos] = useState(true);
   const [tblInventario, setTblInventario] = useState(false);
   const [tblInvFilter, setTblInvFilter] = useState('active'); // 'active', 'archived', 'all'
+  // Filtro de estados de pago para la tabla de pedidos. Por defecto, los 3 activos.
+  const [tblPayFilter, setTblPayFilter] = useState({ pending: true, partial: true, paid: true });
   const [toolsCategorias, setToolsCategorias] = useState(false);
   // Registro de "pagado a socia" por item de pedido
   // estructura: { "orderId_itemIdx_s1": true/false, ... }
@@ -524,9 +526,14 @@ export default function HomePage() {
     const dn = nonCanc.filter(o => o.status === 'delivered');
 
     // ── CONTABILIDAD ACCRUAL (estándar para negocios) ──
-    // Ingresos = total facturado del periodo (las ventas cuentan al venderse, no al cobrarse)
+    // Ingresos brutos = total facturado incluyendo envío cobrado (para reporte)
     const rv = nonCanc.reduce((s, o) => s + (o.total || 0), 0);
-    // Costos = costo real de los productos que salieron del inventario
+    // Envío cobrado a clientas: es pass-through (lo reciben y lo pagan al mensajero).
+    // NO es ganancia del negocio, no entra a distribución 10/45/45.
+    const shippingIncome = nonCanc.reduce((s, o) => s + (o.shipping_charge || 0), 0);
+    // Ingresos de productos = ventas reales sin envío
+    const productRevenue = rv - shippingIncome;
+    // Costos = costo real de los productos que salieron del inventario (incluye bolsa+envío logístico interno)
     const cs = nonCanc.reduce((s, o) => s + (o.cost_total || 0), 0);
     // Dinero realmente cobrado (informativo: lo que hay en caja de esas ventas)
     const cashReceived = nonCanc.reduce((s, o) => {
@@ -538,7 +545,7 @@ export default function HomePage() {
     // Por cobrar = ventas − cobrado
     const pc = Math.max(0, rv - cashReceived);
     const ex = filteredExpenses.reduce((s, e) => s + (e.amount || 0), 0);
-    const nt = rv - cs - ex;
+    const nt = rv - cs - ex - shippingIncome; // Ganancia neta real del negocio (sin contar envío pass-through)
 
     // ── RESERVA DE SPLENDORA ──
     // Por cada producto vendido, la bolsa + envío se apartan para SPLENDORA
@@ -554,12 +561,12 @@ export default function HomePage() {
     }, 0);
 
     // ── DISTRIBUCIÓN ──
-    // Regla: primero se separa la reserva de SPLENDORA (bolsa + envío).
-    // Luego, de la ganancia bruta RESTANTE se aplica 10% / 45% / 45%.
+    // Regla: primero se separa la reserva de SPLENDORA (bolsa + envío interno de producto).
+    // Luego, de la ganancia bruta RESTANTE (sin envío cobrado a clienta) se aplica 10% / 45% / 45%.
     // Los gastos salen primero del 10% de SPLENDORA.
     // Si el 10% no alcanza, las socias cubren el déficit 50/50.
-    // La reserva NO se usa para cubrir déficit (es plata comprometida a reposiciones).
-    const gross = rv - cs; // ganancia bruta total antes de apartar reserva y gastos
+    // El envío cobrado a clienta NO entra a distribución (es pass-through, se paga al mensajero).
+    const gross = productRevenue - cs; // ganancia bruta de productos (sin envío pass-through)
     const distributable = Math.max(0, gross - splendoraReserve); // base para la división
     const bizBase = distributable * 0.10;
     const socBase = distributable * 0.45;
@@ -598,7 +605,7 @@ export default function HomePage() {
 
     return {
       ic, ir, dn, rv, cs, ex, nt, biz, bizTotal, s1, s2, pc, gross, cashReceived,
-      splendoraReserve, distributable,
+      splendoraReserve, distributable, shippingIncome, productRevenue,
       deficitCoveredBySocia, expensesAbsorbedByBiz,
       paidOrders, partialOrders, pendingPayOrders,
       projProfit, projBiz, projS1, projS2,
@@ -619,6 +626,9 @@ export default function HomePage() {
       const orderTotal = o.total || 0;
       const amountPaid = o.amount_paid || 0;
       const ps = o.payment_status || 'pending';
+      const orderShipping = o.shipping_charge || 0;
+      // Total de subtotales de items (para proporcionar el envío entre items)
+      const itemsSubtotal = (o.items || []).reduce((s, i) => s + ((i.priceUnit || 0) * (i.qty || 0)), 0);
       (o.items || []).forEach((it, idx) => {
         const prod = products.find(p => p.id === it.productId);
         const costPerUnit = prod ? (prod.cost_total || 0) : 0;
@@ -627,17 +637,19 @@ export default function HomePage() {
         const qty = it.qty || 0;
         const subtotal = priceUnit * qty;
         // Distribuir el pago del pedido proporcional al subtotal del item (sobre el subtotal productos)
-        const itemsSubtotal = (o.items || []).reduce((s, i) => s + ((i.priceUnit || 0) * (i.qty || 0)), 0);
         const proportion = itemsSubtotal > 0 ? subtotal / itemsSubtotal : 0;
+        // Envío que le corresponde a este item (proporcional)
+        const itemShipping = Math.round(orderShipping * proportion);
         let paidOfItem = 0;
         if (ps === 'paid') paidOfItem = subtotal;
         else if (ps === 'partial') {
-          // El amount_paid incluye envío. Descontamos envío para no inflar el pago del producto.
-          const paymentToProducts = Math.max(0, amountPaid - (o.shipping_charge || 0));
+          // El amount_paid incluye envío. Descontamos envío total del pedido para no inflar pago del producto.
+          const paymentToProducts = Math.max(0, amountPaid - orderShipping);
           paidOfItem = Math.min(subtotal, Math.round(paymentToProducts * proportion));
         }
         const dueOfItem = Math.max(0, subtotal - paidOfItem);
         // Ganancia del item = (precio − costo) × qty. De eso, 10% SPLENDORA + 45% cada socia. Más reserva bolsa+envío para SPLENDORA.
+        // El envío cobrado a clienta NO entra a comisiones.
         const itemGross = (priceUnit - costPerUnit) * qty;
         const reserve = bagShipPerUnit * qty;
         const distributable = Math.max(0, itemGross - reserve);
@@ -674,6 +686,7 @@ export default function HomePage() {
           splendoraShare,
           inversion,
           reserve,
+          itemShipping,
           paidS1,
           paidS2,
           paidSplendora,
@@ -684,22 +697,32 @@ export default function HomePage() {
     return rows;
   }, [filteredOrders, products, payouts]);
 
-  // Totales para la tabla
+  // Tabla filtrada por estado de pago (multi-select)
+  const displayedOrdersTable = useMemo(() => {
+    return ordersTable.filter(r => {
+      const ps = r.paymentStatus || 'pending';
+      return tblPayFilter[ps];
+    });
+  }, [ordersTable, tblPayFilter]);
+
+  // Totales para la tabla (respetan el filtro de estado de pago)
   const ordersTableTotals = useMemo(() => {
     const t = {
       qty: 0, sales: 0, paid: 0, due: 0,
       costTotal: 0,
+      shippingTotal: 0,
       s1Total: 0, s1ToPay: 0,
       s2Total: 0, s2ToPay: 0,
       splendoraTotal: 0, splendoraToReceive: 0,
       inversionTotal: 0, inversionToRecover: 0,
     };
-    ordersTable.forEach(r => {
+    displayedOrdersTable.forEach(r => {
       t.qty += r.qty;
       t.sales += r.subtotal;
       t.paid += r.paidOfItem;
       t.due += r.dueOfItem;
       t.costTotal += r.costUnit * r.qty;
+      t.shippingTotal += r.itemShipping || 0;
       t.s1Total += r.commissionS1;
       t.s2Total += r.commissionS2;
       t.splendoraTotal += r.splendoraShare;
@@ -710,7 +733,7 @@ export default function HomePage() {
       if (!r.paidInversion) t.inversionToRecover += r.inversion;
     });
     return t;
-  }, [ordersTable]);
+  }, [displayedOrdersTable]);
 
   // ── DESCARGAR XLSX REAL (abre en Excel, Google Sheets, Numbers) ──
   async function buildTablesExcel() {
@@ -729,11 +752,11 @@ export default function HomePage() {
     const period = fMonth !== null ? `${MONTHS[fMonth]} ${fYear}` : 'Todo';
 
     // ── HOJA 1: PEDIDOS ──
-    const pedidosHeaders = ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Producto', 'Código', 'Talla', 'Color', 'Cantidad', 'Costo u.', 'Costo total', 'Precio u.', 'Subtotal', 'Abonado', 'Por cobrar', 'Estado pago', `Com. ${config.partner1}`, `Pagado ${config.partner1}`, `Com. ${config.partner2}`, `Pagado ${config.partner2}`, 'SPLENDORA', 'Recibido SPLENDORA', 'Inversión', 'Recuperada inversión'];
-    const pedidosRows = ordersTable.map(r => [
+    const pedidosHeaders = ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Producto', 'Código', 'Talla', 'Color', 'Cantidad', 'Costo u.', 'Costo total', 'Precio u.', 'Subtotal', 'Envío cobrado', 'Abonado', 'Por cobrar', 'Estado pago', `Com. ${config.partner1}`, `Pagado ${config.partner1}`, `Com. ${config.partner2}`, `Pagado ${config.partner2}`, 'SPLENDORA', 'Recibido SPLENDORA', 'Inversión', 'Recuperada inversión'];
+    const pedidosRows = displayedOrdersTable.map(r => [
       new Date(r.date).toLocaleDateString('es-CO'),
       r.customer, r.city, r.channel, r.productName, r.productCode, r.size, r.color,
-      r.qty, r.costUnit, r.costUnit * r.qty, r.priceUnit, r.subtotal, r.paidOfItem, r.dueOfItem,
+      r.qty, r.costUnit, r.costUnit * r.qty, r.priceUnit, r.subtotal, r.itemShipping || 0, r.paidOfItem, r.dueOfItem,
       PAYMENT_STATUS[r.paymentStatus]?.label || r.paymentStatus,
       r.commissionS1, r.paidS1 ? 'Sí' : 'No',
       r.commissionS2, r.paidS2 ? 'Sí' : 'No',
@@ -744,7 +767,7 @@ export default function HomePage() {
     const totalesRow = [
       'TOTALES', '', '', '', '', '', '', '',
       ordersTableTotals.qty, '', ordersTableTotals.costTotal, '', ordersTableTotals.sales,
-      ordersTableTotals.paid, ordersTableTotals.due, '',
+      ordersTableTotals.shippingTotal, ordersTableTotals.paid, ordersTableTotals.due, '',
       ordersTableTotals.s1Total, '',
       ordersTableTotals.s2Total, '',
       ordersTableTotals.splendoraTotal, '',
@@ -755,7 +778,7 @@ export default function HomePage() {
     // Anchos de columnas
     wsPedidos['!cols'] = [
       { wch: 11 }, { wch: 20 }, { wch: 14 }, { wch: 11 }, { wch: 26 }, { wch: 15 }, { wch: 7 }, { wch: 12 },
-      { wch: 9 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 12 },
+      { wch: 9 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 12 }, { wch: 13 }, { wch: 11 }, { wch: 12 }, { wch: 12 },
       { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 13 }, { wch: 18 }, { wch: 12 }, { wch: 20 },
     ];
     XLSX.utils.book_append_sheet(wb, wsPedidos, `Pedidos ${period}`.slice(0, 31));
@@ -815,7 +838,8 @@ export default function HomePage() {
       ['Concepto', 'Valor'],
       ['Periodo', period],
       ['Unidades vendidas', ordersTableTotals.qty],
-      ['Ventas', ordersTableTotals.sales],
+      ['Ventas productos', ordersTableTotals.sales],
+      ['Envío cobrado (pass-through)', ordersTableTotals.shippingTotal],
       ['Cobrado', ordersTableTotals.paid],
       ['Por cobrar', ordersTableTotals.due],
       ['Costo total productos', ordersTableTotals.costTotal],
@@ -1232,8 +1256,9 @@ export default function HomePage() {
                 ))}
               </div>
               <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, textAlign: 'center', fontStyle: 'italic', lineHeight: 1.5 }}>
-                * Ingresos = ventas del periodo. Ganancia neta = ingresos − costos − gastos.<br/>
-                De cada producto vendido, bolsa + envío se aparta como reserva de SPLENDORA (para reponer supplies).<br/>
+                * Ingresos = ventas del periodo (productos + envío cobrado). Ganancia neta = ingresos − costos − gastos − envío cobrado.<br/>
+                De cada producto vendido, bolsa + envío interno se aparta como reserva de SPLENDORA (para reponer supplies).<br/>
+                El envío cobrado a la clienta NO entra a distribución (es pass-through, se paga al mensajero).<br/>
                 Del resto se distribuye 10% SPLENDORA / 45% cada socia. Gastos salen del 10%; si no alcanza, socias cubren 50/50.
               </div>
             </div>
@@ -1409,14 +1434,43 @@ export default function HomePage() {
                     <div onClick={() => toggleDash(setTblPedidos, tblPedidos, 'tbl_pedidos')}
                       style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tblPedidos ? 10 : 0, userSelect: 'none' }}>
                       <div style={{ fontSize: 11, fontWeight: 800, color: '#1A1D23' }}>
-                        📋 Pedidos {fMonth !== null ? `— ${MONTHS[fMonth]} ${fYear}` : '— Todo'} ({ordersTable.length} filas)
+                        📋 Pedidos {fMonth !== null ? `— ${MONTHS[fMonth]} ${fYear}` : '— Todo'} ({displayedOrdersTable.length}{displayedOrdersTable.length !== ordersTable.length ? ` de ${ordersTable.length}` : ''} filas)
                       </div>
                       <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{tblPedidos ? '▾' : '▸'}</span>
                     </div>
                     {tblPedidos && (
-                      ordersTable.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: 20, color: '#9CA3AF', fontSize: 11 }}>Sin pedidos en este periodo</div>
-                      ) : (
+                      <>
+                        {/* Filtro multi-select por estado de pago */}
+                        <div style={{ display: 'flex', gap: 4, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <span style={{ fontSize: 9, color: '#6B7280', fontWeight: 700, marginRight: 4 }}>Estado de pago:</span>
+                          {[
+                            { k: 'pending', l: 'Pendiente', cfg: PAYMENT_STATUS.pending },
+                            { k: 'partial', l: 'Abono', cfg: PAYMENT_STATUS.partial },
+                            { k: 'paid', l: 'Pagado', cfg: PAYMENT_STATUS.paid },
+                          ].map(opt => {
+                            const active = tblPayFilter[opt.k];
+                            return (
+                              <button key={opt.k} onClick={() => setTblPayFilter(prev => ({ ...prev, [opt.k]: !prev[opt.k] }))}
+                                style={{ padding: '5px 10px', borderRadius: 6, fontSize: 9, fontWeight: 700, border: 'none', cursor: 'pointer',
+                                  background: active ? opt.cfg.color : '#F0F2F5',
+                                  color: active ? '#FFF' : '#9CA3AF',
+                                  boxShadow: active ? 'none' : 'var(--raised-sm)',
+                                  opacity: active ? 1 : 0.7,
+                                }}>
+                                {active ? '✓' : '○'} {opt.l}
+                              </button>
+                            );
+                          })}
+                          <button onClick={() => setTblPayFilter({ pending: true, partial: true, paid: true })}
+                            style={{ padding: '5px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, border: 'none', cursor: 'pointer', background: '#F0F2F5', color: '#6B7280', boxShadow: 'var(--raised-sm)', marginLeft: 'auto' }}>
+                            Todos
+                          </button>
+                        </div>
+                        {displayedOrdersTable.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: 20, color: '#9CA3AF', fontSize: 11 }}>
+                            {ordersTable.length === 0 ? 'Sin pedidos en este periodo' : 'No hay pedidos con ese estado de pago'}
+                          </div>
+                        ) : (
                         <div style={{ overflowX: 'auto', marginLeft: -10, marginRight: -10 }}>
                           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, minWidth: 1100 }}>
                             <thead>
@@ -1427,7 +1481,7 @@ export default function HomePage() {
                               </tr>
                             </thead>
                             <tbody>
-                              {ordersTable.map((r, idx) => {
+                              {displayedOrdersTable.map((r, idx) => {
                                 const psCfg = PAYMENT_STATUS[r.paymentStatus];
                                 return (
                                   <tr key={idx} style={{ borderBottom: '1px solid #E5E7EB' }}>
@@ -1515,7 +1569,8 @@ export default function HomePage() {
                             </tbody>
                           </table>
                         </div>
-                      )
+                        )}
+                      </>
                     )}
                   </div>
 
