@@ -1801,10 +1801,12 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
     photo_url_2: initial.photo_url_2 || '',
     extra_photos: initial.extra_photos || [],
     discount: initial.discount || 0, hide_price: initial.hide_price || false,
+    variants: initial.variants || null,
   } : {
     name: '', category: 'Blusas', productCategories: [], size: 'M', sizes: [], color: '', colors: [],
     cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 1,
     description: '', photo_url: '', photo_url_2: '', extra_photos: [], discount: 0, hide_price: false,
+    variants: null,
   });
 
   // Detección de nombre duplicado (case-insensitive, ignora espacios)
@@ -1818,6 +1820,65 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
   const refExtra = useRef(null);
   const ct = (Number(f.cost_product) || 0) + (Number(f.cost_bag) || 0) + (Number(f.cost_shipping) || 0);
   const mg = f.price > 0 ? ((f.price - ct) / f.price * 100).toFixed(1) : 0;
+
+  // ── Stock calculado desde variantes (si están activas) ──
+  const hasVariants = f.variants && Array.isArray(f.variants.items) && f.variants.items.length > 0;
+  const variantStockTotal = hasVariants
+    ? f.variants.items.reduce((s, it) => s + (Number(it.stock) || 0), 0)
+    : 0;
+  const effectiveStock = hasVariants ? variantStockTotal : (Number(f.stock) || 0);
+
+  // ── Helpers para variantes ──
+  function toggleVariants() {
+    if (f.variants) {
+      // Desactivar: limpiar variantes, dejar stock como estaba
+      setF(prev => ({ ...prev, variants: null }));
+    } else {
+      // Activar: arrancar con modo size_color y una fila vacía
+      setF(prev => ({ ...prev, variants: { mode: 'size_color', items: [] } }));
+    }
+  }
+
+  function changeVariantMode(newMode) {
+    setF(prev => ({
+      ...prev,
+      variants: { mode: newMode, items: (prev.variants?.items || []).map(it => ({
+        size: newMode === 'color_only' ? null : (it.size || ''),
+        color: newMode === 'size_only' ? null : (it.color || ''),
+        stock: it.stock || 0,
+      })) },
+    }));
+  }
+
+  function addVariant() {
+    const mode = f.variants?.mode || 'size_color';
+    const newItem = {
+      size: mode === 'color_only' ? null : '',
+      color: mode === 'size_only' ? null : '',
+      stock: 0,
+    };
+    setF(prev => ({ ...prev, variants: { ...prev.variants, items: [...(prev.variants?.items || []), newItem] } }));
+  }
+
+  function updateVariant(idx, field, value) {
+    setF(prev => ({
+      ...prev,
+      variants: {
+        ...prev.variants,
+        items: prev.variants.items.map((it, i) => i === idx ? { ...it, [field]: value } : it),
+      },
+    }));
+  }
+
+  function removeVariant(idx) {
+    setF(prev => ({
+      ...prev,
+      variants: {
+        ...prev.variants,
+        items: prev.variants.items.filter((_, i) => i !== idx),
+      },
+    }));
+  }
 
   async function handleUpload(field, e) {
     const file = e.target.files?.[0];
@@ -2015,7 +2076,111 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Fld label="Precio venta"><input className="neu-input" type="number" value={f.price} onChange={e => setF({ ...f, price: Number(e.target.value) })} /></Fld>
-        <Fld label="Stock"><input className="neu-input" type="number" value={f.stock} onChange={e => setF({ ...f, stock: Number(e.target.value) })} /></Fld>
+        <Fld label={hasVariants ? "Stock total (auto)" : "Stock"}>
+          <input className="neu-input" type="number"
+            value={hasVariants ? variantStockTotal : f.stock}
+            onChange={e => setF({ ...f, stock: Number(e.target.value) })}
+            disabled={hasVariants}
+            style={hasVariants ? { background: '#F0F2F5', color: '#6B7280', cursor: 'not-allowed' } : {}} />
+        </Fld>
+      </div>
+
+      {/* ── BLOQUE DE VARIANTES ── */}
+      <div style={{ marginBottom: 14, padding: 12, background: f.variants ? '#F0F7FF' : '#F9FAFB', borderRadius: 8, border: f.variants ? '1px solid #BFDBFE' : '1px solid #E5E7EB' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }} onClick={toggleVariants}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#1A1D23' }}>
+              {f.variants ? '✓ Stock por variantes activado' : '☐ Manejar stock por variantes (talla/color)'}
+            </div>
+            <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>
+              {f.variants
+                ? 'Llena el stock por cada combinación. El total se calcula solo.'
+                : 'Actívalo si quieres controlar stock por talla, color o combinación.'}
+            </div>
+          </div>
+          <div style={{
+            width: 36, height: 20, borderRadius: 12,
+            background: f.variants ? '#4A6FA5' : '#D1D5DB',
+            position: 'relative', flexShrink: 0,
+            transition: 'background 0.2s',
+          }}>
+            <div style={{
+              position: 'absolute', top: 2, left: f.variants ? 18 : 2,
+              width: 16, height: 16, borderRadius: '50%', background: '#FFF',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.2)', transition: 'left 0.2s',
+            }} />
+          </div>
+        </div>
+
+        {f.variants && (
+          <div style={{ marginTop: 12 }}>
+            {/* Selector de modo */}
+            <div style={{ fontSize: 10, color: '#6B7280', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Modo</div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+              {[
+                { v: 'size_color', l: 'Talla + Color' },
+                { v: 'size_only', l: 'Solo talla' },
+                { v: 'color_only', l: 'Solo color' },
+              ].map(m => (
+                <button key={m.v} type="button" onClick={() => changeVariantMode(m.v)}
+                  style={{
+                    padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                    background: f.variants.mode === m.v ? '#4A6FA5' : '#FFF',
+                    color: f.variants.mode === m.v ? '#FFF' : '#6B7280',
+                    boxShadow: f.variants.mode === m.v ? 'none' : 'var(--raised-sm)',
+                  }}>{m.l}</button>
+              ))}
+            </div>
+
+            {/* Lista de variantes */}
+            {f.variants.items.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 14, color: '#9CA3AF', fontSize: 11 }}>
+                Aún no hay variantes. Agrega la primera.
+              </div>
+            )}
+
+            {f.variants.items.map((it, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                {f.variants.mode !== 'color_only' && (
+                  <input
+                    placeholder="Talla"
+                    value={it.size || ''}
+                    onChange={e => updateVariant(idx, 'size', e.target.value)}
+                    style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit' }}
+                  />
+                )}
+                {f.variants.mode !== 'size_only' && (
+                  <input
+                    placeholder="Color"
+                    value={it.color || ''}
+                    onChange={e => updateVariant(idx, 'color', e.target.value)}
+                    style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit' }}
+                  />
+                )}
+                <input
+                  type="number"
+                  placeholder="Stock"
+                  value={it.stock}
+                  onChange={e => updateVariant(idx, 'stock', Number(e.target.value))}
+                  style={{ width: 70, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit', textAlign: 'center' }}
+                />
+                <button type="button" onClick={() => removeVariant(idx)}
+                  style={{ background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, width: 28, height: 28, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>✕</button>
+              </div>
+            ))}
+
+            <button type="button" onClick={addVariant}
+              style={{ width: '100%', marginTop: 8, padding: '8px', background: '#FFF', color: '#4A6FA5', border: '1px dashed #4A6FA5', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>
+              + Agregar variante
+            </button>
+
+            {variantStockTotal > 0 && (
+              <div style={{ marginTop: 10, padding: 8, background: '#FFF', borderRadius: 6, textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#4A6FA5' }}>
+                Stock total: {variantStockTotal} unidades
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -2044,7 +2209,42 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
           if (!f.name) return alert('Nombre requerido');
           if (isDuplicate) return alert('Ya existe un producto con ese nombre. Cambia el nombre antes de guardar.');
           if (f.productCategories.length === 0) return alert('Selecciona al menos una categoría');
-          onSave({ ...f, cost_total: ct, categories: f.productCategories, category: f.productCategories[0] });
+
+          // Validar variantes si están activas
+          if (hasVariants) {
+            if (f.variants.items.length === 0) {
+              return alert('Activaste variantes pero no agregaste ninguna. Agrega al menos una o desactiva el switch.');
+            }
+            for (let i = 0; i < f.variants.items.length; i++) {
+              const it = f.variants.items[i];
+              if (f.variants.mode !== 'color_only' && !it.size) {
+                return alert(`La variante #${i + 1} no tiene talla.`);
+              }
+              if (f.variants.mode !== 'size_only' && !it.color) {
+                return alert(`La variante #${i + 1} no tiene color.`);
+              }
+            }
+            // Detectar duplicados
+            const seen = new Set();
+            for (const it of f.variants.items) {
+              const key = `${it.size || ''}|${it.color || ''}`;
+              if (seen.has(key)) {
+                return alert(`Tienes variantes duplicadas: ${it.size || ''} ${it.color || ''}`);
+              }
+              seen.add(key);
+            }
+          }
+
+          // Stock final: si hay variantes, usar suma; si no, usar el campo simple
+          const finalStock = hasVariants ? variantStockTotal : (Number(f.stock) || 0);
+          onSave({
+            ...f,
+            stock: finalStock,
+            cost_total: ct,
+            categories: f.productCategories,
+            category: f.productCategories[0],
+            variants: hasVariants ? f.variants : null,
+          });
         }}>
         {initial ? 'Guardar cambios' : 'Agregar producto'}
       </button>
