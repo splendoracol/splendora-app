@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { MercadoPagoConfig, Payment } from 'mercadopago';
+import { MercadoPagoConfig, Payment, PaymentRefund } from 'mercadopago';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -22,7 +22,6 @@ export async function GET(request) {
       return NextResponse.json({ error: 'Falta r' }, { status: 400 });
     }
 
-    // 1. Obtener la reserva
     const { data: reservation, error: resError } = await supabaseAdmin
       .from('stock_reservations')
       .select('*')
@@ -33,46 +32,62 @@ export async function GET(request) {
       return NextResponse.json({ error: 'Reserva no encontrada' }, { status: 404 });
     }
 
-    // 2. ¿Ya está confirmada? Devolver número de pedido
+    // Ya confirmada
     if (reservation.status === 'paid' && reservation.order_id) {
       const { data: order } = await supabaseAdmin
         .from('orders')
         .select('order_number')
         .eq('id', reservation.order_id)
         .single();
-
       return NextResponse.json({
         status: 'paid',
         orderNumber: order?.order_number || null,
       });
     }
 
-    // 3. ¿Está cancelada o expirada? No hacer nada
-    if (reservation.status === 'cancelled' || reservation.status === 'expired') {
-      return NextResponse.json({ status: reservation.status, orderNumber: null });
+    // Ya reembolsada
+    if (reservation.status === 'refunded' && reservation.order_id) {
+      const { data: order } = await supabaseAdmin
+        .from('orders')
+        .select('order_number')
+        .eq('id', reservation.order_id)
+        .single();
+      return NextResponse.json({
+        status: 'refunded',
+        orderNumber: order?.order_number || null,
+      });
     }
 
-    // 4. Si tenemos paymentId (vino del redirect de MP), verificar directamente con MP
-    // Esto es el "respaldo" en caso de que el webhook no haya funcionado
+    if (reservation.status === 'cancelled') {
+      return NextResponse.json({ status: 'cancelled', orderNumber: null });
+    }
+
     if (paymentId) {
       try {
         const payment = new Payment(mpClient);
         const paymentData = await payment.get({ id: paymentId });
-
         const status = paymentData.status;
         const amountPaid = Number(paymentData.transaction_amount) || 0;
 
         if (status === 'approved') {
-          // ¡Confirmar y crear pedido!
+          // Verificar si la reserva sigue válida + stock disponible
+          const expiredReserve = new Date(reservation.expires_at) < new Date();
+          const cancelledReserve = reservation.status === 'cancelled' || reservation.status === 'expired';
+
+          if (expiredReserve || cancelledReserve) {
+            const stockAvailable = await checkStockStillAvailable(reservation);
+            if (!stockAvailable) {
+              // Sin stock → reembolsar
+              const orderNumber = await processRefundAndRecord(reservation, paymentId, amountPaid);
+              return NextResponse.json({ status: 'refunded', orderNumber });
+            }
+          }
+
           const orderNumber = await confirmReservationAndCreateOrder(reservation, paymentId, amountPaid);
-          return NextResponse.json({
-            status: 'paid',
-            orderNumber,
-          });
+          return NextResponse.json({ status: 'paid', orderNumber });
         } else if (status === 'pending' || status === 'in_process') {
           return NextResponse.json({ status: 'pending', orderNumber: null });
         } else {
-          // rejected, cancelled
           await supabaseAdmin
             .from('stock_reservations')
             .update({ status: 'cancelled', mp_payment_id: String(paymentId) })
@@ -81,12 +96,10 @@ export async function GET(request) {
         }
       } catch (mpErr) {
         console.error('[Check-order] Error consultando MP:', mpErr);
-        // Falla la consulta a MP — devolver pending para reintentar
         return NextResponse.json({ status: 'pending', orderNumber: null });
       }
     }
 
-    // Sin paymentId, solo devolver el estado actual
     return NextResponse.json({ status: reservation.status, orderNumber: null });
 
   } catch (err) {
@@ -95,17 +108,40 @@ export async function GET(request) {
   }
 }
 
-// ── Función compartida con webhook: crear pedido y descontar stock ──
-async function confirmReservationAndCreateOrder(reservation, paymentId, amountPaid) {
-  // Re-verificar que la reserva siga pendiente (race condition con webhook)
+async function checkStockStillAvailable(reservation) {
+  const { data: product } = await supabaseAdmin
+    .from('products')
+    .select('stock, variants, archived')
+    .eq('id', reservation.product_id)
+    .single();
+
+  if (!product || product.archived) return false;
+  const productHasVariants = !!(product.variants && Array.isArray(product.variants.items) && product.variants.items.length > 0);
+  const wantedQty = reservation.qty || 1;
+
+  if (productHasVariants) {
+    const mode = product.variants.mode;
+    const variant = product.variants.items.find(it => {
+      const sizeMatch = mode === 'color_only' || (it.size === reservation.size);
+      const colorMatch = mode === 'size_only' || (it.color === reservation.color);
+      return sizeMatch && colorMatch;
+    });
+    if (!variant) return false;
+    return (Number(variant.stock) || 0) >= wantedQty;
+  } else {
+    return (Number(product.stock) || 0) >= wantedQty;
+  }
+}
+
+async function processRefundAndRecord(reservation, paymentId, amountPaid) {
+  // Re-verificar idempotencia
   const { data: freshReservation } = await supabaseAdmin
     .from('stock_reservations')
     .select('status, order_id')
     .eq('id', reservation.id)
     .single();
 
-  if (freshReservation?.status === 'paid' && freshReservation?.order_id) {
-    // Otro proceso ya la confirmó. Devolver el pedido existente.
+  if (freshReservation?.order_id) {
     const { data: existingOrder } = await supabaseAdmin
       .from('orders')
       .select('order_number')
@@ -114,38 +150,140 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
     return existingOrder?.order_number || null;
   }
 
-  // 1. Obtener producto
+  let refundOk = false;
+  let refundId = null;
+  let refundError = null;
+
+  try {
+    const refundClient = new PaymentRefund(mpClient);
+    const refundResult = await refundClient.create({
+      payment_id: paymentId,
+      body: { amount: amountPaid },
+    });
+    refundOk = true;
+    refundId = refundResult?.id || null;
+  } catch (err) {
+    refundError = err?.message || 'Error desconocido';
+    console.error('[Check-order] Error en reembolso:', err);
+  }
+
   const { data: product } = await supabaseAdmin
     .from('products')
     .select('*')
     .eq('id', reservation.product_id)
     .single();
 
-  if (!product) {
-    console.error('[Check-order] Producto no encontrado');
-    return null;
-  }
+  if (!product) return null;
 
-  const orderTotal = Number(reservation.total) || 0;
-  const costTotal = (Number(product.cost_total) || 0) * (reservation.qty || 1);
-
-  // 2. Generar order_number — empezamos desde 1001 para no verse nuevos
   const { data: counter } = await supabaseAdmin
     .from('counters')
     .select('value')
     .eq('id', 'order_number')
     .single();
-
-  // Si el counter está en 0 o por debajo de 1000, arrancamos en 1001
-  const currentValue = Number(counter?.value) || 0;
+  const currentValue = counter?.value || 0;
   const nextOrderNumber = currentValue < 1000 ? 1001 : currentValue + 1;
 
-  // 3. Crear pedido
+  const orderTotal = Number(reservation.total) || 0;
+  const refundStatusText = refundOk
+    ? `✅ Reembolso automático procesado en Mercado Pago (refund_id: ${refundId})`
+    : `🔴 REEMBOLSO FALLIDO — DEBES REEMBOLSAR MANUALMENTE EN MP: ${refundError}`;
+
+  const orderPayload = {
+    order_number: nextOrderNumber,
+    customer_name: reservation.customer_name || 'Cliente',
+    customer_phone: reservation.customer_phone || '',
+    customer_email: reservation.customer_email || null,
+    customer_doc: reservation.customer_doc,
+    customer_address: reservation.customer_address,
+    city: reservation.customer_city,
+    customer_notes: reservation.customer_notes,
+    channel: 'Mercado Pago',
+    items: [{
+      productId: reservation.product_id,
+      name: product.name,
+      code: product.code,
+      qty: reservation.qty,
+      size: reservation.size,
+      color: reservation.color,
+      priceUnit: Number(reservation.price_unit) || 0,
+      costUnit: Number(product.cost_total) || 0,
+      subtotal: orderTotal,
+    }],
+    total: orderTotal,
+    cost_total: 0,
+    shipping_charge: 0,
+    payment_status: 'refunded',
+    amount_paid: amountPaid,
+    payment_notes: `🔴 REEMBOLSO AUTOMÁTICO\n\nMotivo: Cliente pagó después de los 10 minutos y el producto ya fue vendido a otra persona\n\n${refundStatusText}\n\nPayment ID: ${paymentId}`,
+    status: 'refunded',
+    created_at: new Date().toISOString(),
+  };
+
+  const { data: newOrder, error: orderError } = await supabaseAdmin
+    .from('orders')
+    .insert(orderPayload)
+    .select()
+    .single();
+
+  if (orderError) return null;
+
+  await supabaseAdmin
+    .from('counters')
+    .upsert({ id: 'order_number', value: nextOrderNumber });
+
+  await supabaseAdmin
+    .from('stock_reservations')
+    .update({
+      status: 'refunded',
+      mp_payment_id: String(paymentId),
+      order_id: newOrder.id,
+    })
+    .eq('id', reservation.id);
+
+  return nextOrderNumber;
+}
+
+async function confirmReservationAndCreateOrder(reservation, paymentId, amountPaid) {
+  // Re-verificar idempotencia
+  const { data: freshReservation } = await supabaseAdmin
+    .from('stock_reservations')
+    .select('status, order_id')
+    .eq('id', reservation.id)
+    .single();
+
+  if (freshReservation?.status === 'paid' && freshReservation?.order_id) {
+    const { data: existingOrder } = await supabaseAdmin
+      .from('orders')
+      .select('order_number')
+      .eq('id', freshReservation.order_id)
+      .single();
+    return existingOrder?.order_number || null;
+  }
+
+  const { data: product } = await supabaseAdmin
+    .from('products')
+    .select('*')
+    .eq('id', reservation.product_id)
+    .single();
+
+  if (!product) return null;
+
+  const orderTotal = Number(reservation.total) || 0;
+  const costTotal = (Number(product.cost_total) || 0) * (reservation.qty || 1);
+
+  const { data: counter } = await supabaseAdmin
+    .from('counters')
+    .select('value')
+    .eq('id', 'order_number')
+    .single();
+  const currentValue = counter?.value || 0;
+  const nextOrderNumber = currentValue < 1000 ? 1001 : currentValue + 1;
+
   const orderPayload = {
     order_number: nextOrderNumber,
     customer_name: reservation.customer_name,
     customer_phone: reservation.customer_phone,
-    customer_email: reservation.customer_email,
+    customer_email: reservation.customer_email || null,
     customer_doc: reservation.customer_doc,
     customer_address: reservation.customer_address,
     city: reservation.customer_city,
@@ -167,7 +305,7 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
     shipping_charge: 0,
     payment_status: 'paid',
     amount_paid: amountPaid > 0 ? amountPaid : orderTotal,
-    payment_notes: `Pago automático MP — payment_id: ${paymentId}`,
+    payment_notes: `Pago confirmado vía redirect — payment_id: ${paymentId}`,
     status: 'pending',
     created_at: new Date().toISOString(),
   };
@@ -178,17 +316,12 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
     .select()
     .single();
 
-  if (orderError) {
-    console.error('[Check-order] Error creando pedido:', orderError);
-    return null;
-  }
+  if (orderError) return null;
 
-  // 4. Actualizar counter (upsert por si no existe)
   await supabaseAdmin
     .from('counters')
-    .upsert({ id: 'order_number', value: nextOrderNumber }, { onConflict: 'id' });
+    .upsert({ id: 'order_number', value: nextOrderNumber });
 
-  // 5. Descontar stock de la variante específica (si tiene variantes)
   const productHasVariants = !!(product.variants && Array.isArray(product.variants.items) && product.variants.items.length > 0);
   const reservedQty = reservation.qty || 1;
 
@@ -218,7 +351,6 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
       .eq('id', product.id);
   }
 
-  // 6. Marcar reserva como confirmada
   await supabaseAdmin
     .from('stock_reservations')
     .update({
@@ -229,6 +361,5 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
     })
     .eq('id', reservation.id);
 
-  console.log(`[Check-order] Pedido #${nextOrderNumber} creado por respaldo — reserva ${reservation.id}`);
   return nextOrderNumber;
 }
