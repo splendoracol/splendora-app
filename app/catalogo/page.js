@@ -6,6 +6,67 @@ import { supabase } from '../../lib/supabase';
 const CATEGORIES_FALLBACK = ["Blusas","Pantalones","Vestidos","Faldas","Conjuntos","Accesorios","Zapatos","Bolsos","Otro"];
 const cur = (n) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(n || 0);
 
+// ── HELPERS DE VARIANTES ──
+// Devuelve true si el producto usa variantes
+function hasVariants(product) {
+  return !!(product?.variants && Array.isArray(product.variants.items) && product.variants.items.length > 0);
+}
+
+// Devuelve el stock disponible para una combinación específica (size + color)
+// Si el producto NO tiene variantes, devuelve product.stock
+function getVariantStock(product, size, color) {
+  if (!hasVariants(product)) {
+    return Number(product?.stock) || 0;
+  }
+  const mode = product.variants.mode;
+  const item = product.variants.items.find(it => {
+    const sizeMatch = mode === 'color_only' || (it.size === size);
+    const colorMatch = mode === 'size_only' || (it.color === color);
+    return sizeMatch && colorMatch;
+  });
+  return item ? (Number(item.stock) || 0) : 0;
+}
+
+// Devuelve las tallas disponibles (con su stock total) para mostrar en el catálogo
+// Si producto tiene variantes, retorna tallas únicas del array items
+// Si no, retorna product.sizes o [product.size]
+function getAvailableSizes(product) {
+  if (hasVariants(product)) {
+    const mode = product.variants.mode;
+    if (mode === 'color_only') return []; // No hay tallas
+    const sizesMap = {};
+    product.variants.items.forEach(it => {
+      if (!it.size) return;
+      sizesMap[it.size] = (sizesMap[it.size] || 0) + (Number(it.stock) || 0);
+    });
+    return Object.keys(sizesMap).map(s => ({ size: s, stock: sizesMap[s] }));
+  }
+  // Legacy: sin variantes
+  const sizesArr = product.sizes && product.sizes.length > 0 ? product.sizes : (product.size ? [product.size] : []);
+  return sizesArr.map(s => ({ size: s, stock: Number(product.stock) || 0 }));
+}
+
+function getAvailableColors(product) {
+  if (hasVariants(product)) {
+    const mode = product.variants.mode;
+    if (mode === 'size_only') return []; // No hay colores
+    const colorsMap = {};
+    product.variants.items.forEach(it => {
+      if (!it.color) return;
+      colorsMap[it.color] = (colorsMap[it.color] || 0) + (Number(it.stock) || 0);
+    });
+    return Object.keys(colorsMap).map(c => ({ color: c, stock: colorsMap[c] }));
+  }
+  // Legacy: sin variantes
+  const colorsArr = product.colors && product.colors.length > 0 ? product.colors : (product.color ? [product.color] : []);
+  return colorsArr.map(c => ({ color: c, stock: Number(product.stock) || 0 }));
+}
+
+// Verifica si una combinación específica tiene stock
+function isCombinationAvailable(product, size, color) {
+  return getVariantStock(product, size, color) > 0;
+}
+
 function PhotoNav({ photos, big }) {
   const [idx, setIdx] = useState(0);
   if (!photos || photos.length === 0) return <span style={{ fontSize: big ? 60 : 44, color: '#D1D3D6' }}>+</span>;
@@ -40,8 +101,47 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
   const photos = [p.photo_url, p.photo_url_2, ...(p.extra_photos || [])].filter(Boolean);
   const disc = p.discount > 0;
   const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
-  const allSizes = p.sizes && p.sizes.length > 0 ? p.sizes : [p.size];
-  const allColors = p.colors && p.colors.length > 0 ? p.colors : (p.color ? [p.color] : []);
+
+  // ── NUEVAS HELPERS DE VARIANTES ──
+  const useVariants = hasVariants(p);
+  const sizesWithStock = getAvailableSizes(p);
+  const colorsWithStock = getAvailableColors(p);
+  const allSizes = sizesWithStock.map(x => x.size);
+  const allColors = colorsWithStock.map(x => x.color);
+
+  // Stock de la combinación actual elegida
+  const currentStock = useVariants
+    ? getVariantStock(p, selectedSize, selectedColor)
+    : (Number(p.stock) || 0);
+  const isOutOfStock = currentStock <= 0;
+
+  // ¿Una talla específica tiene stock con el color elegido?
+  function sizeHasStock(size) {
+    if (!useVariants) return true; // Sin variantes, todas disponibles
+    if (p.variants.mode === 'color_only') return true;
+    if (p.variants.mode === 'size_only') {
+      return sizesWithStock.find(x => x.size === size)?.stock > 0;
+    }
+    // Modo size_color: depende del color elegido
+    if (!selectedColor) {
+      // Sin color elegido, verifica si la talla tiene stock en ALGÚN color
+      return sizesWithStock.find(x => x.size === size)?.stock > 0;
+    }
+    return getVariantStock(p, size, selectedColor) > 0;
+  }
+
+  // ¿Un color específico tiene stock con la talla elegida?
+  function colorHasStock(color) {
+    if (!useVariants) return true;
+    if (p.variants.mode === 'size_only') return true;
+    if (p.variants.mode === 'color_only') {
+      return colorsWithStock.find(x => x.color === color)?.stock > 0;
+    }
+    if (!selectedSize) {
+      return colorsWithStock.find(x => x.color === color)?.stock > 0;
+    }
+    return getVariantStock(p, selectedSize, color) > 0;
+  }
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -73,13 +173,23 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 10, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Talla</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {allSizes.map(s => (
-                  <button key={s} onClick={() => onSizeChange(p.id, s)} style={{
-                    padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: "'Montserrat', sans-serif",
-                    background: selectedSize === s ? '#1A1D23' : '#F0F2F5', color: selectedSize === s ? '#FFF' : '#6B7280',
-                    boxShadow: selectedSize === s ? 'none' : 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
-                  }}>{s}</button>
-                ))}
+                {allSizes.map(s => {
+                  const hasStock = sizeHasStock(s);
+                  const isSelected = selectedSize === s;
+                  return (
+                    <button key={s} onClick={() => hasStock && onSizeChange(p.id, s)}
+                      disabled={!hasStock}
+                      style={{
+                        padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none',
+                        cursor: hasStock ? 'pointer' : 'not-allowed', fontFamily: "'Montserrat', sans-serif",
+                        background: isSelected ? '#1A1D23' : (hasStock ? '#F0F2F5' : '#E5E7EB'),
+                        color: isSelected ? '#FFF' : (hasStock ? '#6B7280' : '#9CA3AF'),
+                        boxShadow: isSelected ? 'none' : 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
+                        textDecoration: hasStock ? 'none' : 'line-through',
+                        opacity: hasStock ? 1 : 0.6,
+                      }}>{s}</button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -90,21 +200,49 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 10, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Color</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {allColors.map(c => (
-                  <button key={c} onClick={() => onColorChange(p.id, c)} style={{
-                    padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: "'Montserrat', sans-serif",
-                    background: selectedColor === c ? '#1A1D23' : '#F0F2F5', color: selectedColor === c ? '#FFF' : '#6B7280',
-                    boxShadow: selectedColor === c ? 'none' : 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
-                  }}>{c}</button>
-                ))}
+                {allColors.map(c => {
+                  const hasStock = colorHasStock(c);
+                  const isSelected = selectedColor === c;
+                  return (
+                    <button key={c} onClick={() => hasStock && onColorChange(p.id, c)}
+                      disabled={!hasStock}
+                      style={{
+                        padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none',
+                        cursor: hasStock ? 'pointer' : 'not-allowed', fontFamily: "'Montserrat', sans-serif",
+                        background: isSelected ? '#1A1D23' : (hasStock ? '#F0F2F5' : '#E5E7EB'),
+                        color: isSelected ? '#FFF' : (hasStock ? '#6B7280' : '#9CA3AF'),
+                        boxShadow: isSelected ? 'none' : 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
+                        textDecoration: hasStock ? 'none' : 'line-through',
+                        opacity: hasStock ? 1 : 0.6,
+                      }}>{c}</button>
+                  );
+                })}
               </div>
             </div>
           )}
           {allColors.length === 1 && <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>Color: {allColors[0]}</div>}
 
+          {/* Aviso si la combinación no tiene stock */}
+          {useVariants && isOutOfStock && selectedSize && selectedColor && (
+            <div style={{ marginBottom: 12, padding: '10px 12px', background: '#FEE2E2', color: '#991B1B', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>
+              ⚠ Combinación agotada. Elige otra talla o color.
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {!p.hide_price && (
-              <button onClick={() => onPayMP(p)} style={{ width: '100%', padding: '14px', background: 'linear-gradient(135deg, #00B1EA 0%, #009EE3 100%)', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 800, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif", boxShadow: '0 4px 12px rgba(0,158,227,0.3)' }}>💳 Pagar con Mercado Pago</button>
+              <button onClick={() => !isOutOfStock && onPayMP(p)}
+                disabled={isOutOfStock}
+                style={{
+                  width: '100%', padding: '14px',
+                  background: isOutOfStock ? '#D1D5DB' : 'linear-gradient(135deg, #00B1EA 0%, #009EE3 100%)',
+                  color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 800,
+                  cursor: isOutOfStock ? 'not-allowed' : 'pointer', fontFamily: "'Montserrat', sans-serif",
+                  boxShadow: isOutOfStock ? 'none' : '0 4px 12px rgba(0,158,227,0.3)',
+                  opacity: isOutOfStock ? 0.7 : 1,
+                }}>
+                {isOutOfStock ? '⚠ Sin stock' : '💳 Pagar con Mercado Pago'}
+              </button>
             )}
             <button onClick={() => onWhatsApp(p)} style={{ width: '100%', padding: '13px', background: '#25D366', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif" }}>💬 Preguntar por WhatsApp</button>
             <button onClick={() => onAddCart(p)} style={{ width: '100%', padding: '13px', background: '#F0F2F5', color: '#1A1D23', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif", boxShadow: '3px 3px 6px #D1D3D6, -3px -3px 6px #FFFFFF' }}>🛒 Agregar al carrito</button>
@@ -127,6 +265,11 @@ function CheckoutModal({ product, size, color, onClose }) {
   const disc = product.discount > 0;
   const fp = disc ? Math.round(product.price * (1 - product.discount / 100)) : product.price;
 
+  // Verificar stock de la combinación
+  const useVariants = hasVariants(product);
+  const currentStock = useVariants ? getVariantStock(product, size, color) : (Number(product.stock) || 0);
+  const isOutOfStock = currentStock <= 0;
+
   function update(field, value) {
     setForm(prev => ({ ...prev, [field]: value }));
     setError(null);
@@ -134,6 +277,7 @@ function CheckoutModal({ product, size, color, onClose }) {
 
   async function handleSubmit() {
     // Validación
+    if (isOutOfStock) return setError('Esta combinación ya no tiene stock');
     if (!form.customerName.trim()) return setError('Tu nombre es requerido');
     if (!form.customerPhone.trim()) return setError('Tu celular es requerido');
     if (form.customerPhone.replace(/\D/g, '').length < 7) return setError('Celular inválido');
@@ -364,6 +508,32 @@ export default function CatalogoPage() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!selected) return;
+    // Si el producto tiene variantes y no hay talla/color seleccionado,
+    // pre-seleccionar la primera combinación con stock
+    if (hasVariants(selected)) {
+      const mode = selected.variants.mode;
+      const currentSize = sizes[selected.id];
+      const currentColor = colors[selected.id];
+
+      // Si ya hay selección y tiene stock, no tocar
+      if (currentSize && currentColor && getVariantStock(selected, currentSize, currentColor) > 0) return;
+      if (mode === 'size_only' && currentSize && getVariantStock(selected, currentSize, null) > 0) return;
+      if (mode === 'color_only' && currentColor && getVariantStock(selected, null, currentColor) > 0) return;
+
+      // Buscar primera con stock
+      const first = selected.variants.items.find(it => (Number(it.stock) || 0) > 0);
+      if (!first) return;
+      if (mode !== 'color_only' && first.size && !currentSize) {
+        setSizes(prev => ({ ...prev, [selected.id]: first.size }));
+      }
+      if (mode !== 'size_only' && first.color && !currentColor) {
+        setColors(prev => ({ ...prev, [selected.id]: first.color }));
+      }
+    }
+  }, [selected]);
+
   const filtered = products.filter(p => filter === 'Todas' || (p.categories || [p.category]).includes(filter));
   const wa = cfg?.whatsapp_number || '573172346822';
   const ig = cfg?.instagram_url || 'https://www.instagram.com/splendora.col';
@@ -387,6 +557,30 @@ export default function CatalogoPage() {
   }
 
   function handlePayMP(p) {
+    // Si tiene variantes, asegurar que haya una combinación seleccionada con stock
+    if (hasVariants(p)) {
+      const mode = p.variants.mode;
+      const currentSize = sizes[p.id];
+      const currentColor = colors[p.id];
+
+      // ¿La combinación actual tiene stock?
+      const hasStock = getVariantStock(p, currentSize, currentColor) > 0;
+
+      if (!hasStock) {
+        // Buscar la primera variante con stock y pre-seleccionarla
+        const firstAvailable = p.variants.items.find(it => (Number(it.stock) || 0) > 0);
+        if (!firstAvailable) {
+          alert('Este producto está agotado');
+          return;
+        }
+        if (mode !== 'color_only' && firstAvailable.size) {
+          setSizes(prev => ({ ...prev, [p.id]: firstAvailable.size }));
+        }
+        if (mode !== 'size_only' && firstAvailable.color) {
+          setColors(prev => ({ ...prev, [p.id]: firstAvailable.color }));
+        }
+      }
+    }
     setSelected(null);
     setCheckoutProduct(p);
   }
@@ -447,8 +641,11 @@ export default function CatalogoPage() {
               const disc = p.discount > 0;
               const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
               const photos = [p.photo_url, p.photo_url_2, ...(p.extra_photos || [])].filter(Boolean);
-              const allSizes = p.sizes && p.sizes.length > 0 ? p.sizes : [p.size];
-              const allColors = p.colors && p.colors.length > 0 ? p.colors : (p.color ? [p.color] : []);
+              // Tallas y colores disponibles (considera variantes)
+              const sizesAvail = getAvailableSizes(p);
+              const colorsAvail = getAvailableColors(p);
+              const allSizes = sizesAvail.map(x => x.size);
+              const allColors = colorsAvail.map(x => x.color);
               const inCart = cart.find(x => x.id === p.id);
 
               return (
