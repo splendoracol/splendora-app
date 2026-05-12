@@ -176,11 +176,37 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
     .eq('id', 'order_number');
 
   // 5. Descontar stock real del producto
-  const newStock = Math.max(0, (Number(product.stock) || 0) - (reservation.qty || 1));
-  await supabaseAdmin
-    .from('products')
-    .update({ stock: newStock })
-    .eq('id', product.id);
+  // Si el producto tiene variantes, descontar de la variante específica
+  const productHasVariants = !!(product.variants && Array.isArray(product.variants.items) && product.variants.items.length > 0);
+  const reservedQty = reservation.qty || 1;
+
+  if (productHasVariants) {
+    const mode = product.variants.mode;
+    const newItems = product.variants.items.map(it => {
+      const sizeMatch = mode === 'color_only' || (it.size === reservation.size);
+      const colorMatch = mode === 'size_only' || (it.color === reservation.color);
+      if (sizeMatch && colorMatch) {
+        return { ...it, stock: Math.max(0, (Number(it.stock) || 0) - reservedQty) };
+      }
+      return it;
+    });
+    // Recalcular stock total como suma de variantes
+    const newTotalStock = newItems.reduce((s, it) => s + (Number(it.stock) || 0), 0);
+    await supabaseAdmin
+      .from('products')
+      .update({
+        variants: { ...product.variants, items: newItems },
+        stock: newTotalStock,
+      })
+      .eq('id', product.id);
+  } else {
+    // Sin variantes: descontar del stock total
+    const newStock = Math.max(0, (Number(product.stock) || 0) - reservedQty);
+    await supabaseAdmin
+      .from('products')
+      .update({ stock: newStock })
+      .eq('id', product.id);
+  }
 
   // 6. Marcar reserva como confirmada
   await supabaseAdmin
