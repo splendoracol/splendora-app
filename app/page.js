@@ -2082,7 +2082,8 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
         {f.productCategories.length === 0 && <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 6 }}>Selecciona al menos una categoría</div>}
       </div>
 
-      {/* MULTIPLE COLORS */}
+      {/* MULTIPLE COLORS — solo para productos VIEJOS (los nuevos usan variantes) */}
+      {!isNewProduct && (
       <div style={{ marginBottom: 16 }}>
         <label className="label">Colores disponibles</label>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
@@ -2120,8 +2121,10 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
           </div>
         )}
       </div>
+      )}
 
-      {/* MULTIPLE SIZES */}
+      {/* MULTIPLE SIZES — solo para productos VIEJOS */}
+      {!isNewProduct && (
       <div style={{ marginBottom: 16 }}>
         <label className="label">Tallas disponibles (selecciona varias)</label>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -2140,6 +2143,7 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
           ))}
         </div>
       </div>
+      )}
 
       <div className="label">Costos</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
@@ -2202,23 +2206,29 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
           )}
 
           {f.variants?.items?.map((it, idx) => (
-            <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+            <div key={idx} style={{
+              display: 'grid',
+              gridTemplateColumns: f.variants.mode === 'size_color'
+                ? 'minmax(0, 1fr) minmax(0, 1.2fr) 60px 28px'
+                : 'minmax(0, 1fr) 70px 28px',
+              gap: 4, marginBottom: 6, alignItems: 'center',
+            }}>
               {f.variants.mode !== 'color_only' && (
                 <input
                   placeholder="Talla"
                   value={it.size || ''}
                   onChange={e => updateVariant(idx, 'size', e.target.value)}
-                  style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit' }}
+                  style={{ minWidth: 0, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit', boxSizing: 'border-box', width: '100%' }}
                 />
               )}
               {f.variants.mode !== 'size_only' && (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#FFF' }}>
-                  {it.color && <ColorDot name={it.color} size={14} />}
+                <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '5px 6px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#FFF', boxSizing: 'border-box' }}>
+                  {it.color && <ColorDot name={it.color} size={12} />}
                   <input
                     placeholder="Color"
                     value={it.color || ''}
                     onChange={e => updateVariant(idx, 'color', e.target.value)}
-                    style={{ flex: 1, border: 'none', outline: 'none', fontSize: 11, fontFamily: 'inherit', background: 'transparent' }}
+                    style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', fontSize: 11, fontFamily: 'inherit', background: 'transparent', width: '100%' }}
                   />
                 </div>
               )}
@@ -2227,10 +2237,10 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
                 placeholder="Stock"
                 value={it.stock}
                 onChange={e => updateVariant(idx, 'stock', Number(e.target.value))}
-                style={{ width: 70, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit', textAlign: 'center' }}
+                style={{ minWidth: 0, padding: '6px 4px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit', textAlign: 'center', boxSizing: 'border-box', width: '100%' }}
               />
               <button type="button" onClick={() => removeVariant(idx)}
-                style={{ background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, width: 28, height: 28, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>✕</button>
+                style={{ background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, width: 28, height: 28, cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: 0, flexShrink: 0 }}>✕</button>
             </div>
           ))}
 
@@ -2300,23 +2310,29 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
             )}
 
             {f.variants.items.map((it, idx) => (
-              <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              <div key={idx} style={{
+                display: 'grid',
+                gridTemplateColumns: f.variants.mode === 'size_color'
+                  ? 'minmax(0, 1fr) minmax(0, 1.2fr) 60px 28px'
+                  : 'minmax(0, 1fr) 70px 28px',
+                gap: 4, marginBottom: 6, alignItems: 'center',
+              }}>
                 {f.variants.mode !== 'color_only' && (
                   <input
                     placeholder="Talla"
                     value={it.size || ''}
                     onChange={e => updateVariant(idx, 'size', e.target.value)}
-                    style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit' }}
+                    style={{ minWidth: 0, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit', boxSizing: 'border-box', width: '100%' }}
                   />
                 )}
                 {f.variants.mode !== 'size_only' && (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#FFF' }}>
-                    {it.color && <ColorDot name={it.color} size={14} />}
+                  <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '5px 6px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#FFF', boxSizing: 'border-box' }}>
+                    {it.color && <ColorDot name={it.color} size={12} />}
                     <input
                       placeholder="Color"
                       value={it.color || ''}
                       onChange={e => updateVariant(idx, 'color', e.target.value)}
-                      style={{ flex: 1, border: 'none', outline: 'none', fontSize: 11, fontFamily: 'inherit', background: 'transparent' }}
+                      style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', fontSize: 11, fontFamily: 'inherit', background: 'transparent', width: '100%' }}
                     />
                   </div>
                 )}
@@ -2325,10 +2341,10 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
                   placeholder="Stock"
                   value={it.stock}
                   onChange={e => updateVariant(idx, 'stock', Number(e.target.value))}
-                  style={{ width: 70, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit', textAlign: 'center' }}
+                  style={{ minWidth: 0, padding: '6px 4px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit', textAlign: 'center', boxSizing: 'border-box', width: '100%' }}
                 />
                 <button type="button" onClick={() => removeVariant(idx)}
-                  style={{ background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, width: 28, height: 28, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>✕</button>
+                  style={{ background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, width: 28, height: 28, cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: 0, flexShrink: 0 }}>✕</button>
               </div>
             ))}
 
