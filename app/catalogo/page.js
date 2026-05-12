@@ -115,32 +115,45 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
     : (Number(p.stock) || 0);
   const isOutOfStock = currentStock <= 0;
 
-  // ¿Una talla específica tiene stock con el color elegido?
+  // ¿Una talla tiene stock en alguna combinación? (sin importar color)
   function sizeHasStock(size) {
-    if (!useVariants) return true; // Sin variantes, todas disponibles
+    if (!useVariants) return true;
     if (p.variants.mode === 'color_only') return true;
-    if (p.variants.mode === 'size_only') {
-      return sizesWithStock.find(x => x.size === size)?.stock > 0;
-    }
-    // Modo size_color: depende del color elegido
-    if (!selectedColor) {
-      // Sin color elegido, verifica si la talla tiene stock en ALGÚN color
-      return sizesWithStock.find(x => x.size === size)?.stock > 0;
-    }
-    return getVariantStock(p, size, selectedColor) > 0;
+    return sizesWithStock.find(x => x.size === size)?.stock > 0;
   }
 
-  // ¿Un color específico tiene stock con la talla elegida?
+  // ¿Un color tiene stock en alguna combinación? (sin importar talla)
   function colorHasStock(color) {
     if (!useVariants) return true;
     if (p.variants.mode === 'size_only') return true;
-    if (p.variants.mode === 'color_only') {
-      return colorsWithStock.find(x => x.color === color)?.stock > 0;
+    return colorsWithStock.find(x => x.color === color)?.stock > 0;
+  }
+
+  // Al hacer clic en una talla: si la combinación con el color actual no tiene stock,
+  // ajusta automáticamente el color a uno que SÍ tenga stock para esa talla
+  function handleSizeClick(size) {
+    onSizeChange(p.id, size);
+    if (useVariants && p.variants.mode === 'size_color') {
+      const currentColor = selectedColor;
+      if (!currentColor || getVariantStock(p, size, currentColor) <= 0) {
+        // Buscar primer color con stock para esa talla
+        const compatibleColor = p.variants.items.find(it => it.size === size && (Number(it.stock) || 0) > 0)?.color;
+        if (compatibleColor) onColorChange(p.id, compatibleColor);
+      }
     }
-    if (!selectedSize) {
-      return colorsWithStock.find(x => x.color === color)?.stock > 0;
+  }
+
+  // Al hacer clic en un color: si la combinación con la talla actual no tiene stock,
+  // ajusta automáticamente la talla a una que SÍ tenga stock para ese color
+  function handleColorClick(color) {
+    onColorChange(p.id, color);
+    if (useVariants && p.variants.mode === 'size_color') {
+      const currentSize = selectedSize;
+      if (!currentSize || getVariantStock(p, currentSize, color) <= 0) {
+        const compatibleSize = p.variants.items.find(it => it.color === color && (Number(it.stock) || 0) > 0)?.size;
+        if (compatibleSize) onSizeChange(p.id, compatibleSize);
+      }
     }
-    return getVariantStock(p, selectedSize, color) > 0;
   }
 
   return (
@@ -177,7 +190,7 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
                   const hasStock = sizeHasStock(s);
                   const isSelected = selectedSize === s;
                   return (
-                    <button key={s} onClick={() => hasStock && onSizeChange(p.id, s)}
+                    <button key={s} onClick={() => hasStock && handleSizeClick(s)}
                       disabled={!hasStock}
                       style={{
                         padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none',
@@ -204,7 +217,7 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
                   const hasStock = colorHasStock(c);
                   const isSelected = selectedColor === c;
                   return (
-                    <button key={c} onClick={() => hasStock && onColorChange(p.id, c)}
+                    <button key={c} onClick={() => hasStock && handleColorClick(c)}
                       disabled={!hasStock}
                       style={{
                         padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none',
