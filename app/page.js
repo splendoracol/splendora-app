@@ -368,6 +368,16 @@ export default function HomePage() {
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerCityFilter, setCustomerCityFilter] = useState('');
 
+  // Pedidos expandidos en la vista (estilo Shopify) — set de IDs
+  const [expandedOrders, setExpandedOrders] = useState(new Set());
+  function toggleOrderExpanded(id) {
+    setExpandedOrders(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   useEffect(() => {
     try {
       const s = localStorage.getItem('dash_socias');
@@ -1184,114 +1194,282 @@ export default function HomePage() {
 
             {filteredOrders.length === 0 ? (
               <div className="neu-card" style={{ textAlign: 'center', padding: 32, color: '#9CA3AF' }}>Sin pedidos en este periodo</div>
-            ) : filteredOrders.map(o => {
-              const ps = o.payment_status || 'pending';
-              const psCfg = PAYMENT_STATUS[ps];
-              const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0));
-              // Obtener foto principal de cada producto del pedido
-              const itemThumbs = (o.items || []).map(it => {
-                const prod = products.find(p => p.id === it.productId);
-                return { qty: it.qty, name: it.name, photo: prod?.photo_url };
-              });
-              return (
-              <div key={o.id} className="neu-card" style={{ padding: 14, marginBottom: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>
-                      {o.order_number && <span style={{ color: '#4A6FA5', fontWeight: 800 }}>#{o.order_number} · </span>}
-                      {o.customer_name}{o.city ? <span style={{ fontSize: 10, color: '#6B7280', fontWeight: 500 }}> · 📍 {o.city}</span> : null}
-                    </div>
-                    {o.customer_email && (
-                      <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <span>📧</span>
-                        <a href={`mailto:${o.customer_email}`} style={{ color: '#6B7280', textDecoration: 'none' }}>{o.customer_email}</a>
-                      </div>
-                    )}
-                    {/* Miniaturas de productos */}
-                    {itemThumbs.length > 0 && (
-                      <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
-                        {itemThumbs.map((t, idx) => (
-                          <div key={idx} title={`${t.name} ×${t.qty}`} style={{ position: 'relative', width: 36, height: 36, borderRadius: 8, overflow: 'hidden', boxShadow: 'var(--raised-sm)', flexShrink: 0, background: '#E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            {t.photo
-                              ? <img src={t.photo} alt={t.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                              : <span style={{ fontSize: 14, color: '#9CA3AF' }}>📦</span>
+            ) : (
+              <div className="neu-card" style={{ padding: 4, marginBottom: 8, background: '#FFFFFF' }}>
+                {filteredOrders.map((o, idx) => {
+                  const ps = o.payment_status || 'pending';
+                  const psCfg = PAYMENT_STATUS[ps];
+                  const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0));
+                  const isExpanded = expandedOrders.has(o.id);
+                  const isCancelled = o.status === 'cancelled';
+                  const isRefunded = o.status === 'refunded' || ps === 'refunded';
+
+                  // Foto principal del primer producto
+                  const firstItem = (o.items || [])[0];
+                  const firstProd = firstItem ? products.find(p => p.id === firstItem.productId) : null;
+                  const firstPhoto = firstProd?.photo_url;
+                  const totalQty = (o.items || []).reduce((s, it) => s + (it.qty || 0), 0);
+
+                  // Resumen corto de items para la fila colapsada
+                  const itemSummary = (o.items || []).map(i =>
+                    `${i.name}${i.size ? ` · ${i.size}` : ''}${i.color ? ` · ${i.color}` : ''}`
+                  ).join(' | ');
+
+                  // Estado para el badge: si está cancelado/refunded, mostrar eso. Sino mostrar status normal.
+                  let badgeColor, badgeBg, badgeLabel;
+                  if (isRefunded) {
+                    badgeColor = '#991B1B'; badgeBg = '#FEE2E2'; badgeLabel = 'Reembolsado';
+                  } else if (isCancelled) {
+                    badgeColor = '#991B1B'; badgeBg = '#FEE2E2'; badgeLabel = 'Cancelado';
+                  } else {
+                    badgeColor = STATUS[o.status]?.color || '#6B7280';
+                    badgeBg = '#F0F2F5';
+                    badgeLabel = STATUS[o.status]?.label || o.status;
+                  }
+
+                  return (
+                    <div key={o.id}>
+                      {idx > 0 && <div style={{ height: 1, background: '#F0F2F5', margin: '0 14px' }} />}
+
+                      {/* FILA COMPACTA (clickeable) */}
+                      <div
+                        onClick={() => toggleOrderExpanded(o.id)}
+                        style={{
+                          padding: '12px 14px',
+                          cursor: 'pointer',
+                          borderRadius: 10,
+                          background: isExpanded ? '#F9FAFB' : 'transparent',
+                          opacity: (isCancelled || isRefunded) ? 0.65 : 1,
+                          transition: 'background 0.15s',
+                        }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          {/* Foto */}
+                          <div style={{ width: 36, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: '#E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                            {firstPhoto
+                              ? <img src={firstPhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              : <span style={{ fontSize: 16, color: '#9CA3AF' }}>📦</span>
                             }
-                            {t.qty > 1 && <span style={{ position: 'absolute', bottom: 0, right: 0, background: '#1A1D23', color: '#FFF', fontSize: 8, fontWeight: 800, padding: '1px 4px', borderTopLeftRadius: 6 }}>×{t.qty}</span>}
+                            {totalQty > 1 && (
+                              <span style={{ position: 'absolute', bottom: 0, right: 0, background: '#1A1D23', color: '#FFF', fontSize: 8, fontWeight: 800, padding: '1px 4px', borderTopLeftRadius: 6 }}>×{totalQty}</span>
+                            )}
                           </div>
-                        ))}
+
+                          {/* Info principal */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 1 }}>
+                              {o.order_number && (
+                                <span style={{ color: '#4A6FA5', fontWeight: 800, fontSize: 11 }}>#{o.order_number}</span>
+                              )}
+                              <span style={{
+                                fontWeight: 700, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                textDecoration: (isCancelled || isRefunded) ? 'line-through' : 'none',
+                              }}>
+                                {o.customer_name || '(sin nombre)'}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 10, color: '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {itemSummary}{o.city ? ` · ${o.city}` : ''}
+                            </div>
+                          </div>
+
+                          {/* Monto + estado */}
+                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                            <div style={{
+                              fontSize: 13, fontWeight: 800,
+                              textDecoration: (isCancelled || isRefunded) ? 'line-through' : 'none',
+                            }}>{cur(o.total)}</div>
+                            <span style={{
+                              display: 'inline-block', padding: '2px 7px', borderRadius: 5,
+                              fontSize: 9, fontWeight: 700, color: badgeColor, background: badgeBg, marginTop: 3,
+                            }}>{badgeLabel}</span>
+                          </div>
+                        </div>
                       </div>
-                    )}
-                    <div style={{ fontSize: 10, color: '#6B7280', marginTop: 4 }}>{(o.items || []).map(i => `${i.name} ×${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', ')}</div>
-                    <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 2 }}>{o.channel} · {new Date(o.created_at).toLocaleDateString('es-CO')}</div>
-                    {o.payment_notes && <div style={{ fontSize: 9, color: '#6B7280', marginTop: 3, fontStyle: 'italic' }}>📝 {o.payment_notes}</div>}
-                  </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div style={{ fontSize: 16, fontWeight: 800 }}>{cur(o.total)}</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 3, alignItems: 'flex-end' }}>
-                      <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, color: STATUS[o.status]?.color, boxShadow: 'var(--pressed)' }}>{STATUS[o.status]?.label}</span>
-                      <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 6, fontSize: 9, fontWeight: 700, color: psCfg.color, background: psCfg.bg }}>
-                        {psCfg.icon} {psCfg.label}
-                      </span>
+
+                      {/* PANEL EXPANDIDO */}
+                      {isExpanded && (
+                        <div style={{
+                          padding: '0 14px 14px',
+                          borderTop: '1px solid #E5E7EB',
+                          marginTop: -4,
+                          background: '#F9FAFB',
+                          borderBottomLeftRadius: 10,
+                          borderBottomRightRadius: 10,
+                        }}>
+                          {/* Detalles cliente */}
+                          <div style={{ paddingTop: 12, marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, color: '#6B7280', marginBottom: 4 }}>
+                              <strong>📞 {o.customer_phone || '—'}</strong>
+                              {o.customer_doc && <span> · CC {o.customer_doc}</span>}
+                            </div>
+                            {o.customer_email && (
+                              <div style={{ fontSize: 10, marginBottom: 4 }}>
+                                <a href={`mailto:${o.customer_email}`} style={{ color: '#4A6FA5', textDecoration: 'none' }}>📧 {o.customer_email}</a>
+                              </div>
+                            )}
+                            {o.customer_address && (
+                              <div style={{ fontSize: 10, color: '#6B7280', marginBottom: 4 }}>
+                                🏠 {o.customer_address}{o.city ? `, ${o.city}` : ''}
+                              </div>
+                            )}
+                            {o.customer_notes && (
+                              <div style={{ fontSize: 10, color: '#6B7280', marginBottom: 4, fontStyle: 'italic' }}>
+                                📝 {o.customer_notes}
+                              </div>
+                            )}
+                            <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 6 }}>
+                              {o.channel || 'Manual'} · {new Date(o.created_at).toLocaleString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                            {o.payment_notes && (
+                              <div style={{ fontSize: 9, color: '#6B7280', marginTop: 4, padding: '6px 8px', background: '#FFFFFF', borderRadius: 6, lineHeight: 1.4, whiteSpace: 'pre-wrap' }}>
+                                {o.payment_notes}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Detalle de items */}
+                          {(o.items || []).length > 0 && (
+                            <div style={{ background: '#FFFFFF', borderRadius: 8, padding: 8, marginBottom: 12 }}>
+                              {(o.items || []).map((it, i) => {
+                                const prod = products.find(p => p.id === it.productId);
+                                return (
+                                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', fontSize: 11 }}>
+                                    <div style={{ width: 26, height: 26, borderRadius: 4, overflow: 'hidden', background: '#E5E7EB', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      {prod?.photo_url
+                                        ? <img src={prod.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        : <span style={{ fontSize: 12, color: '#9CA3AF' }}>📦</span>
+                                      }
+                                    </div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
+                                      <div style={{ color: '#9CA3AF', fontSize: 9 }}>
+                                        ×{it.qty}{it.size ? ` · ${it.size}` : ''}{it.color ? ` · ${it.color}` : ''}
+                                      </div>
+                                    </div>
+                                    <div style={{ fontWeight: 700 }}>{cur(it.subtotal || (it.priceUnit * it.qty))}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Estado de entrega — solo si no está cancelado/reembolsado */}
+                          {!isCancelled && !isRefunded && (
+                            <>
+                              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Estado del pedido</div>
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
+                                {Object.entries(STATUS).filter(([k]) => k !== 'cancelled' && k !== 'refunded').map(([k, v]) => (
+                                  <button
+                                    key={k}
+                                    onClick={(e) => { e.stopPropagation(); updateOrderStatus(o.id, k, o.items, o.status); }}
+                                    style={{
+                                      padding: '5px 10px', fontSize: 10, fontWeight: 700,
+                                      background: o.status === k ? v.color : '#FFFFFF',
+                                      color: o.status === k ? '#FFFFFF' : '#6B7280',
+                                      border: 'none', borderRadius: 6, cursor: 'pointer',
+                                      boxShadow: o.status === k ? 'none' : '0 1px 3px rgba(0,0,0,0.08)',
+                                      fontFamily: "'Montserrat', sans-serif",
+                                    }}>
+                                    {v.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+
+                          {/* Estado de pago — solo si no es reembolsado */}
+                          {!isRefunded && (
+                            <>
+                              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Pago</div>
+                              {ps !== 'paid' && !isCancelled && (
+                                <div style={{ padding: '6px 10px', background: '#FFFFFF', borderRadius: 6, marginBottom: 6, display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+                                  <span>Abonado: <b style={{ color: '#4A9E6B' }}>{cur(o.amount_paid || 0)}</b></span>
+                                  <span>Por cobrar: <b style={{ color: '#C0504E' }}>{cur(due)}</b></span>
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); updatePayment(o.id, 'pending', 0); }}
+                                  style={{
+                                    padding: '5px 10px', fontSize: 10, fontWeight: 700,
+                                    background: ps === 'pending' ? PAYMENT_STATUS.pending.color : '#FFFFFF',
+                                    color: ps === 'pending' ? '#FFFFFF' : '#6B7280',
+                                    border: 'none', borderRadius: 6, cursor: 'pointer',
+                                    boxShadow: ps === 'pending' ? 'none' : '0 1px 3px rgba(0,0,0,0.08)',
+                                    fontFamily: "'Montserrat', sans-serif",
+                                  }}>○ Pendiente</button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const current = o.amount_paid || 0;
+                                    const s = prompt(`Abono TOTAL acumulado de la clienta\n(Total del pedido: ${cur(o.total)})\n${current > 0 ? `Ya tenía abonado: ${cur(current)}` : ''}`, String(current));
+                                    if (s === null) return;
+                                    const n = Number(s);
+                                    if (isNaN(n) || n < 0) { alert('Monto inválido'); return; }
+                                    if (n >= (o.total || 0)) { updatePayment(o.id, 'paid', o.total); return; }
+                                    updatePayment(o.id, 'partial', n);
+                                  }}
+                                  style={{
+                                    padding: '5px 10px', fontSize: 10, fontWeight: 700,
+                                    background: ps === 'partial' ? PAYMENT_STATUS.partial.color : '#FFFFFF',
+                                    color: ps === 'partial' ? '#FFFFFF' : '#6B7280',
+                                    border: 'none', borderRadius: 6, cursor: 'pointer',
+                                    boxShadow: ps === 'partial' ? 'none' : '0 1px 3px rgba(0,0,0,0.08)',
+                                    fontFamily: "'Montserrat', sans-serif",
+                                  }}>◐ Abono</button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); updatePayment(o.id, 'paid', o.total); }}
+                                  style={{
+                                    padding: '5px 10px', fontSize: 10, fontWeight: 700,
+                                    background: ps === 'paid' ? PAYMENT_STATUS.paid.color : '#FFFFFF',
+                                    color: ps === 'paid' ? '#FFFFFF' : '#6B7280',
+                                    border: 'none', borderRadius: 6, cursor: 'pointer',
+                                    boxShadow: ps === 'paid' ? 'none' : '0 1px 3px rgba(0,0,0,0.08)',
+                                    fontFamily: "'Montserrat', sans-serif",
+                                  }}>● Pagado</button>
+                              </div>
+                            </>
+                          )}
+
+                          {/* Acciones secundarias */}
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', paddingTop: 8, borderTop: '1px solid #E5E7EB' }}>
+                            {!isCancelled && !isRefunded && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm('¿Cancelar este pedido?\n\nEl stock de los productos volverá al inventario.')) {
+                                    updateOrderStatus(o.id, 'cancelled', o.items, o.status);
+                                  }
+                                }}
+                                style={{
+                                  padding: '5px 10px', fontSize: 10, fontWeight: 700,
+                                  background: '#FFFFFF', color: '#C0504E',
+                                  border: '1px solid #FCA5A5', borderRadius: 6, cursor: 'pointer',
+                                  fontFamily: "'Montserrat', sans-serif",
+                                }}>Cancelar pedido</button>
+                            )}
+                            <button
+                              title="Borrar permanentemente"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const msg = (!isCancelled && !isRefunded)
+                                  ? `¿Borrar este pedido PERMANENTEMENTE?\n\nCliente: ${o.customer_name}\nTotal: ${cur(o.total)}\n\nLas unidades volverán al inventario.\nEsta acción NO se puede deshacer.`
+                                  : `¿Borrar este pedido PERMANENTEMENTE?\n\nCliente: ${o.customer_name}\nTotal: ${cur(o.total)}\n\nEsta acción NO se puede deshacer.`;
+                                if (confirm(msg)) deleteOrder(o.id, o.items, o.status);
+                              }}
+                              style={{
+                                padding: '5px 10px', fontSize: 12,
+                                background: '#FFFFFF', color: '#9CA3AF',
+                                border: '1px solid #E5E7EB', borderRadius: 6, cursor: 'pointer',
+                              }}>🗑</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                </div>
-
-                {/* Línea de pago */}
-                {ps !== 'paid' && o.status !== 'cancelled' && (
-                  <div className="neu-card neu-pressed" style={{ padding: 8, marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
-                    <span>Abonado: <b style={{ color: '#4A9E6B' }}>{cur(o.amount_paid || 0)}</b></span>
-                    <span>Por cobrar: <b style={{ color: '#C0504E' }}>{cur(due)}</b></span>
-                  </div>
-                )}
-
-                {/* Botones de estado de entrega */}
-                <div style={{ display: 'flex', gap: 4, marginTop: 10, flexWrap: 'wrap' }}>
-                  {Object.entries(STATUS).filter(([k]) => k !== 'cancelled').map(([k, v]) => (
-                    <button key={k} className="neu-btn neu-btn-sm" onClick={() => updateOrderStatus(o.id, k, o.items, o.status)}
-                      style={{ padding: '3px 7px', fontSize: 9, ...(o.status === k ? { boxShadow: 'var(--pressed)', color: v.color, fontWeight: 800 } : {}) }}>
-                      {v.label}
-                    </button>
-                  ))}
-                  <button className="neu-btn neu-btn-sm neu-btn-danger" onClick={() => { if (confirm('¿Cancelar este pedido?\n\nEl stock de los productos volverá al inventario.')) updateOrderStatus(o.id, 'cancelled', o.items, o.status); }}
-                    style={{ padding: '3px 7px', fontSize: 9, marginLeft: 'auto' }}>Cancelar</button>
-                </div>
-
-                {/* Botones de estado de pago */}
-                <div style={{ display: 'flex', gap: 4, marginTop: 6, alignItems: 'center' }}>
-                  <span style={{ fontSize: 9, color: '#6B7280', fontWeight: 700, marginRight: 4 }}>PAGO:</span>
-                  <button className="neu-btn neu-btn-sm" onClick={() => updatePayment(o.id, 'pending', 0)}
-                    style={{ padding: '3px 8px', fontSize: 9, ...(ps === 'pending' ? { boxShadow: 'var(--pressed)', color: PAYMENT_STATUS.pending.color, fontWeight: 800 } : {}) }}>
-                    ○ Pendiente
-                  </button>
-                  <button className="neu-btn neu-btn-sm" onClick={() => {
-                    const current = o.amount_paid || 0;
-                    const s = prompt(`Abono TOTAL acumulado de la clienta\n(Total del pedido: ${cur(o.total)})\n${current > 0 ? `Ya tenía abonado: ${cur(current)}` : ''}`, String(current));
-                    if (s === null) return;
-                    const n = Number(s);
-                    if (isNaN(n) || n < 0) { alert('Monto inválido'); return; }
-                    if (n >= (o.total || 0)) { updatePayment(o.id, 'paid', o.total); return; }
-                    updatePayment(o.id, 'partial', n);
-                  }}
-                    style={{ padding: '3px 8px', fontSize: 9, ...(ps === 'partial' ? { boxShadow: 'var(--pressed)', color: PAYMENT_STATUS.partial.color, fontWeight: 800 } : {}) }}>
-                    ◐ Abono
-                  </button>
-                  <button className="neu-btn neu-btn-sm" onClick={() => updatePayment(o.id, 'paid', o.total)}
-                    style={{ padding: '3px 8px', fontSize: 9, ...(ps === 'paid' ? { boxShadow: 'var(--pressed)', color: PAYMENT_STATUS.paid.color, fontWeight: 800 } : {}) }}>
-                    ● Pagado
-                  </button>
-                  <button className="neu-btn neu-btn-sm" title="Borrar pedido permanentemente"
-                    onClick={() => {
-                      const msg = o.status !== 'cancelled'
-                        ? `¿Borrar este pedido PERMANENTEMENTE?\n\nCliente: ${o.customer_name}\nTotal: ${cur(o.total)}\n\nLas unidades volverán al inventario.\nEsta acción NO se puede deshacer.`
-                        : `¿Borrar este pedido cancelado PERMANENTEMENTE?\n\nCliente: ${o.customer_name}\nTotal: ${cur(o.total)}\n\nEsta acción NO se puede deshacer.`;
-                      if (confirm(msg)) deleteOrder(o.id, o.items, o.status);
-                    }}
-                    style={{ padding: '3px 8px', fontSize: 10, marginLeft: 'auto', color: '#C0504E' }}>
-                    🗑
-                  </button>
-                </div>
+                  );
+                })}
               </div>
-            );})}
+            )}
           </div>
         )}
 
