@@ -6,6 +6,47 @@ import { supabase } from '../../lib/supabase';
 const CATEGORIES_FALLBACK = ["Blusas","Pantalones","Vestidos","Faldas","Conjuntos","Accesorios","Zapatos","Bolsos","Otro"];
 const cur = (n) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0 }).format(n || 0);
 
+// Mapa de colores pastel — detecta automáticamente el hex según el nombre
+const COLOR_MAP = {
+  'negro': '#4A4A4A', 'blanco': '#FAFAFA',
+  'rojo': '#F5A3A3', 'rojo pastel': '#F5A3A3',
+  'azul': '#A8C8E8', 'azul pastel': '#A8C8E8', 'celeste': '#BEDFF0',
+  'rosa': '#F4C2D7', 'rosa pastel': '#F4C2D7', 'rosado': '#F4C2D7', 'fucsia': '#E8A5C0',
+  'verde': '#B5D9B5', 'verde pastel': '#B5D9B5', 'menta': '#B8E0D2',
+  'amarillo': '#F8E5A1', 'amarillo pastel': '#F8E5A1', 'mostaza': '#E8D078',
+  'cafe': '#C9A98E', 'café': '#C9A98E', 'marron': '#B89272', 'marrón': '#B89272',
+  'beige': '#F0E4D0', 'crema': '#F4ECDD',
+  'gris': '#C8C8C8', 'gris perla': '#D8D8D8',
+  'morado': '#C9B0E0', 'lila': '#D5BEE0', 'lavanda': '#D5C5E8', 'violeta': '#C5B0DC',
+  'naranja': '#F5C8A8', 'durazno': '#F8C8B0',
+  'salmon': '#F5B8A8', 'salmón': '#F5B8A8', 'coral': '#F5B5A8',
+  'vinotinto': '#9B4A4A', 'vino': '#9B4A4A',
+  'dorado': '#E0C896', 'champagne': '#E8D5B0',
+  'plata': '#D0D0D0', 'plateado': '#D0D0D0',
+  'turquesa': '#B5DFD8', 'aqua': '#B5DFD8',
+  'oliva': '#B8B58A', 'caqui': '#D0C29B', 'nude': '#E8D0BC', 'perla': '#F0EBE0', 'tierra': '#C8AC8A',
+};
+
+function getColorHex(name) {
+  if (!name) return '#E5E7EB';
+  const normalized = String(name).trim().toLowerCase();
+  if (COLOR_MAP[normalized]) return COLOR_MAP[normalized];
+  for (const key of Object.keys(COLOR_MAP)) {
+    if (normalized.includes(key)) return COLOR_MAP[key];
+  }
+  return '#E5E7EB';
+}
+
+function ColorDot({ name, size = 14 }) {
+  const hex = getColorHex(name);
+  return (
+    <span style={{
+      display: 'inline-block', width: size, height: size, borderRadius: '50%',
+      background: hex, border: '1px solid rgba(0,0,0,0.15)', verticalAlign: 'middle', flexShrink: 0,
+    }} />
+  );
+}
+
 // ── HELPERS DE VARIANTES ──
 // Devuelve true si el producto usa variantes
 function hasVariants(product) {
@@ -220,14 +261,18 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
                     <button key={c} onClick={() => hasStock && handleColorClick(c)}
                       disabled={!hasStock}
                       style={{
-                        padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none',
+                        padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none',
                         cursor: hasStock ? 'pointer' : 'not-allowed', fontFamily: "'Montserrat', sans-serif",
                         background: isSelected ? '#1A1D23' : (hasStock ? '#F0F2F5' : '#E5E7EB'),
                         color: isSelected ? '#FFF' : (hasStock ? '#6B7280' : '#9CA3AF'),
                         boxShadow: isSelected ? 'none' : 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
                         textDecoration: hasStock ? 'none' : 'line-through',
                         opacity: hasStock ? 1 : 0.6,
-                      }}>{c}</button>
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                      }}>
+                      <ColorDot name={c} size={12} />
+                      {c}
+                    </button>
                   );
                 })}
               </div>

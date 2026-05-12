@@ -31,6 +31,80 @@ const PAYMENT_STATUS = {
 
 const cur = (n) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(n || 0);
 
+// Mapa de colores pastel — detecta automáticamente el hex según el nombre
+const COLOR_MAP = {
+  'negro': '#4A4A4A',
+  'blanco': '#FAFAFA',
+  'rojo': '#F5A3A3',
+  'rojo pastel': '#F5A3A3',
+  'azul': '#A8C8E8',
+  'azul pastel': '#A8C8E8',
+  'celeste': '#BEDFF0',
+  'rosa': '#F4C2D7',
+  'rosa pastel': '#F4C2D7',
+  'rosado': '#F4C2D7',
+  'fucsia': '#E8A5C0',
+  'verde': '#B5D9B5',
+  'verde pastel': '#B5D9B5',
+  'menta': '#B8E0D2',
+  'amarillo': '#F8E5A1',
+  'amarillo pastel': '#F8E5A1',
+  'mostaza': '#E8D078',
+  'cafe': '#C9A98E',
+  'café': '#C9A98E',
+  'marron': '#B89272',
+  'marrón': '#B89272',
+  'beige': '#F0E4D0',
+  'crema': '#F4ECDD',
+  'gris': '#C8C8C8',
+  'gris perla': '#D8D8D8',
+  'morado': '#C9B0E0',
+  'lila': '#D5BEE0',
+  'lavanda': '#D5C5E8',
+  'violeta': '#C5B0DC',
+  'naranja': '#F5C8A8',
+  'durazno': '#F8C8B0',
+  'salmon': '#F5B8A8',
+  'salmón': '#F5B8A8',
+  'coral': '#F5B5A8',
+  'vinotinto': '#9B4A4A',
+  'vino': '#9B4A4A',
+  'dorado': '#E0C896',
+  'champagne': '#E8D5B0',
+  'plata': '#D0D0D0',
+  'plateado': '#D0D0D0',
+  'turquesa': '#B5DFD8',
+  'aqua': '#B5DFD8',
+  'oliva': '#B8B58A',
+  'caqui': '#D0C29B',
+  'nude': '#E8D0BC',
+  'perla': '#F0EBE0',
+  'tierra': '#C8AC8A',
+};
+
+function getColorHex(name) {
+  if (!name) return '#E5E7EB';
+  const normalized = String(name).trim().toLowerCase();
+  if (COLOR_MAP[normalized]) return COLOR_MAP[normalized];
+  // Buscar palabra clave dentro del nombre
+  for (const key of Object.keys(COLOR_MAP)) {
+    if (normalized.includes(key)) return COLOR_MAP[key];
+  }
+  return '#E5E7EB'; // Color por defecto si no se reconoce
+}
+
+// Componente bolita de color
+function ColorDot({ name, size = 14 }) {
+  const hex = getColorHex(name);
+  return (
+    <span style={{
+      display: 'inline-block', width: size, height: size, borderRadius: '50%',
+      background: hex, border: '1px solid rgba(0,0,0,0.15)', verticalAlign: 'middle',
+      flexShrink: 0,
+    }} />
+  );
+}
+
 // Normaliza un nombre de producto para comparación (sin espacios extra, sin mayúsculas)
 const normalizeName = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -1805,10 +1879,13 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
     variants: initial.variants || null,
   } : {
     name: '', category: 'Blusas', productCategories: [], size: 'M', sizes: [], color: '', colors: [],
-    cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 1,
+    cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 0,
     description: '', photo_url: '', photo_url_2: '', extra_photos: [], discount: 0, hide_price: false,
-    variants: null,
+    variants: { mode: 'size_color', items: [] }, // Nuevo producto: variantes obligatorias
   });
+
+  // Es producto nuevo (no tiene initial)
+  const isNewProduct = !initial;
 
   // Detección de nombre duplicado (case-insensitive, ignora espacios)
   const normalizedName = normalizeName(f.name);
@@ -2074,19 +2151,102 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
         <span style={{ fontWeight: 700, fontSize: 12 }}>Costo total: {cur(ct)}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isNewProduct ? '1fr' : '1fr 1fr', gap: 12 }}>
         <Fld label="Precio venta"><input className="neu-input" type="number" value={f.price} onChange={e => setF({ ...f, price: Number(e.target.value) })} /></Fld>
-        <Fld label={hasVariants ? "Stock total (auto)" : "Stock"}>
-          <input className="neu-input" type="number"
-            value={hasVariants ? variantStockTotal : f.stock}
-            onChange={e => setF({ ...f, stock: Number(e.target.value) })}
-            disabled={hasVariants}
-            style={hasVariants ? { background: '#F0F2F5', color: '#6B7280', cursor: 'not-allowed' } : {}} />
-        </Fld>
+        {!isNewProduct && (
+          <Fld label={hasVariants ? "Stock total (auto)" : "Stock"}>
+            <input className="neu-input" type="number"
+              value={hasVariants ? variantStockTotal : f.stock}
+              onChange={e => setF({ ...f, stock: Number(e.target.value) })}
+              disabled={hasVariants}
+              style={hasVariants ? { background: '#F0F2F5', color: '#6B7280', cursor: 'not-allowed' } : {}} />
+          </Fld>
+        )}
       </div>
 
       {/* ── BLOQUE DE VARIANTES ── */}
-      <div style={{ marginBottom: 14, padding: 12, background: f.variants ? '#F0F7FF' : '#F9FAFB', borderRadius: 8, border: f.variants ? '1px solid #BFDBFE' : '1px solid #E5E7EB' }}>
+      {/* Para productos nuevos: variantes obligatorias, sin switch */}
+      {/* Para productos viejos: switch como antes */}
+      {isNewProduct ? (
+        <div style={{ marginBottom: 14, padding: 12, background: '#F0F7FF', borderRadius: 8, border: '1px solid #BFDBFE' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#1A1D23', marginBottom: 2 }}>
+            Stock por variantes (talla / color)
+          </div>
+          <div style={{ fontSize: 10, color: '#6B7280', marginBottom: 12 }}>
+            Llena el stock por cada combinación. El total se calcula solo.
+          </div>
+
+          {/* Selector de modo */}
+          <div style={{ fontSize: 10, color: '#6B7280', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Modo</div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+            {[
+              { v: 'size_color', l: 'Talla + Color' },
+              { v: 'size_only', l: 'Solo talla' },
+              { v: 'color_only', l: 'Solo color' },
+            ].map(m => (
+              <button key={m.v} type="button" onClick={() => changeVariantMode(m.v)}
+                style={{
+                  padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                  background: f.variants?.mode === m.v ? '#4A6FA5' : '#FFF',
+                  color: f.variants?.mode === m.v ? '#FFF' : '#6B7280',
+                  boxShadow: f.variants?.mode === m.v ? 'none' : 'var(--raised-sm)',
+                }}>{m.l}</button>
+            ))}
+          </div>
+
+          {/* Lista de variantes */}
+          {(!f.variants?.items || f.variants.items.length === 0) && (
+            <div style={{ textAlign: 'center', padding: 14, color: '#9CA3AF', fontSize: 11 }}>
+              Aún no hay variantes. Agrega la primera.
+            </div>
+          )}
+
+          {f.variants?.items?.map((it, idx) => (
+            <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              {f.variants.mode !== 'color_only' && (
+                <input
+                  placeholder="Talla"
+                  value={it.size || ''}
+                  onChange={e => updateVariant(idx, 'size', e.target.value)}
+                  style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit' }}
+                />
+              )}
+              {f.variants.mode !== 'size_only' && (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#FFF' }}>
+                  {it.color && <ColorDot name={it.color} size={14} />}
+                  <input
+                    placeholder="Color"
+                    value={it.color || ''}
+                    onChange={e => updateVariant(idx, 'color', e.target.value)}
+                    style={{ flex: 1, border: 'none', outline: 'none', fontSize: 11, fontFamily: 'inherit', background: 'transparent' }}
+                  />
+                </div>
+              )}
+              <input
+                type="number"
+                placeholder="Stock"
+                value={it.stock}
+                onChange={e => updateVariant(idx, 'stock', Number(e.target.value))}
+                style={{ width: 70, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit', textAlign: 'center' }}
+              />
+              <button type="button" onClick={() => removeVariant(idx)}
+                style={{ background: '#FEE2E2', color: '#991B1B', border: 'none', borderRadius: 6, width: 28, height: 28, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>✕</button>
+            </div>
+          ))}
+
+          <button type="button" onClick={addVariant}
+            style={{ width: '100%', marginTop: 8, padding: '8px', background: '#FFF', color: '#4A6FA5', border: '1px dashed #4A6FA5', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>
+            + Agregar variante
+          </button>
+
+          {variantStockTotal > 0 && (
+            <div style={{ marginTop: 10, padding: 8, background: '#FFF', borderRadius: 6, textAlign: 'center', fontSize: 11, fontWeight: 700, color: '#4A6FA5' }}>
+              Stock total: {variantStockTotal} unidades
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ marginBottom: 14, padding: 12, background: f.variants ? '#F0F7FF' : '#F9FAFB', borderRadius: 8, border: f.variants ? '1px solid #BFDBFE' : '1px solid #E5E7EB' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }} onClick={toggleVariants}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#1A1D23' }}>
@@ -2150,12 +2310,15 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
                   />
                 )}
                 {f.variants.mode !== 'size_only' && (
-                  <input
-                    placeholder="Color"
-                    value={it.color || ''}
-                    onChange={e => updateVariant(idx, 'color', e.target.value)}
-                    style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, fontFamily: 'inherit' }}
-                  />
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#FFF' }}>
+                    {it.color && <ColorDot name={it.color} size={14} />}
+                    <input
+                      placeholder="Color"
+                      value={it.color || ''}
+                      onChange={e => updateVariant(idx, 'color', e.target.value)}
+                      style={{ flex: 1, border: 'none', outline: 'none', fontSize: 11, fontFamily: 'inherit', background: 'transparent' }}
+                    />
+                  </div>
                 )}
                 <input
                   type="number"
@@ -2182,6 +2345,7 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
           </div>
         )}
       </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Fld label="Descuento %"><input className="neu-input" type="number" min="0" max="99" value={f.discount} onChange={e => setF({ ...f, discount: Number(e.target.value) })} /></Fld>
