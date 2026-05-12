@@ -53,6 +53,29 @@ function hasVariants(product) {
   return !!(product?.variants && Array.isArray(product.variants.items) && product.variants.items.length > 0);
 }
 
+// Calcula cuántas unidades están reservadas en este momento para una variante específica.
+// Las reservas vienen del endpoint /api/stock/reservations (status='pending' y no expiradas).
+function getReservedQty(reservations, productId, size, color, product) {
+  if (!reservations || reservations.length === 0) return 0;
+  const mode = product?.variants?.mode;
+  let total = 0;
+  for (const r of reservations) {
+    if (r.product_id !== productId) continue;
+    // Si el producto tiene variantes, filtrar por la combinación
+    if (mode === 'size_color') {
+      if (r.size === size && r.color === color) total += (r.qty || 0);
+    } else if (mode === 'size_only') {
+      if (r.size === size) total += (r.qty || 0);
+    } else if (mode === 'color_only') {
+      if (r.color === color) total += (r.qty || 0);
+    } else {
+      // Sin variantes
+      total += (r.qty || 0);
+    }
+  }
+  return total;
+}
+
 // Devuelve el stock disponible para una combinación específica (size + color)
 // Si el producto NO tiene variantes, devuelve product.stock
 function getVariantStock(product, size, color) {
@@ -136,7 +159,7 @@ function PhotoNav({ photos, big }) {
   );
 }
 
-function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, selectedSize, onSizeChange, selectedColor, onColorChange, selectedQty, onQtyChange }) {
+function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, selectedSize, onSizeChange, selectedColor, onColorChange, selectedQty, onQtyChange, reservations }) {
   if (!product) return null;
   const p = product;
   const photos = [p.photo_url, p.photo_url_2, ...(p.extra_photos || [])].filter(Boolean);
@@ -150,10 +173,16 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
   const allSizes = sizesWithStock.map(x => x.size);
   const allColors = colorsWithStock.map(x => x.color);
 
-  // Stock de la combinación actual elegida
-  const currentStock = useVariants
+  // Stock base de la combinación actual elegida
+  const baseStock = useVariants
     ? getVariantStock(p, selectedSize, selectedColor)
     : (Number(p.stock) || 0);
+  // Cuánto está reservado por otros clientes en este momento
+  const reservedQty = getReservedQty(reservations, p.id, selectedSize, selectedColor, p);
+  // Stock REAL disponible (lo que el cliente puede comprar AHORA)
+  const currentStock = Math.max(0, baseStock - reservedQty);
+  // ¿La variante existe pero está totalmente reservada?
+  const isReservedByOthers = baseStock > 0 && currentStock === 0;
   const isOutOfStock = currentStock <= 0;
 
   // ¿Una talla tiene stock en alguna combinación? (sin importar color)
@@ -282,8 +311,19 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
           )}
           {allColors.length === 1 && <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>Color: {allColors[0]}</div>}
 
-          {/* Aviso si la combinación no tiene stock */}
-          {useVariants && isOutOfStock && selectedSize && selectedColor && (
+          {/* Aviso si la variante está totalmente reservada por otros */}
+          {isReservedByOthers && (
+            <div style={{ marginBottom: 12, padding: '10px 12px', background: '#FEF3C7', color: '#92400E', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 14 }}>⏱</span>
+              <div>
+                <div>Otra persona está pagando esta combinación.</div>
+                <div style={{ fontSize: 10, fontWeight: 500, marginTop: 2 }}>Si no completa el pago en máx. 10 minutos, volverá a estar disponible.</div>
+              </div>
+            </div>
+          )}
+
+          {/* Aviso si la combinación no existe / sin stock real */}
+          {useVariants && isOutOfStock && !isReservedByOthers && selectedSize && selectedColor && (
             <div style={{ marginBottom: 12, padding: '10px 12px', background: '#FEE2E2', color: '#991B1B', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>
               ⚠ Combinación agotada. Elige otra talla o color.
             </div>
@@ -334,7 +374,9 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
                   boxShadow: isOutOfStock ? 'none' : '0 4px 12px rgba(0,158,227,0.3)',
                   opacity: isOutOfStock ? 0.7 : 1,
                 }}>
-                {isOutOfStock ? '⚠ Sin stock' : (selectedQty > 1 ? `💳 Pagar ${cur(fp * selectedQty)} (${selectedQty} unid.)` : '💳 Pagar con Mercado Pago')}
+                {isOutOfStock
+                  ? (isReservedByOthers ? '⏱ Reservado temporalmente' : '⚠ Sin stock')
+                  : (selectedQty > 1 ? `💳 Pagar ${cur(fp * selectedQty)} (${selectedQty} unid.)` : '💳 Pagar con Mercado Pago')}
               </button>
             )}
             <button onClick={() => onWhatsApp(p)} style={{ width: '100%', padding: '13px', background: '#25D366', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif" }}>💬 Preguntar por WhatsApp</button>
@@ -625,6 +667,7 @@ export default function CatalogoPage() {
   const [sizes, setSizes] = useState({});
   const [colors, setColors] = useState({});
   const [qtys, setQtys] = useState({}); // cantidad seleccionada por producto
+  const [reservations, setReservations] = useState([]); // reservas activas de otros clientes
   const [selected, setSelected] = useState(null);
   const [cart, setCart] = useState([]);
   const [showCart, setShowCart] = useState(false);
@@ -653,6 +696,27 @@ export default function CatalogoPage() {
         }
       } catch {}
     })();
+  }, []);
+
+  // ── Cargar reservas activas (de otros clientes) y refrescar cada 30 segundos ──
+  // Esto permite mostrar en tiempo real qué tallas/colores están temporalmente reservados.
+  useEffect(() => {
+    let intervalId;
+    async function fetchReservations() {
+      try {
+        const res = await fetch('/api/stock/reservations', { cache: 'no-store' });
+        if (res.ok) {
+          const json = await res.json();
+          setReservations(json.reservations || []);
+        }
+      } catch (err) {
+        // Silencioso: si falla el endpoint, simplemente no mostramos reservas
+        console.warn('No se pudieron cargar reservas:', err);
+      }
+    }
+    fetchReservations();
+    intervalId = setInterval(fetchReservations, 30000); // refresh cada 30s
+    return () => clearInterval(intervalId);
   }, []);
 
   useEffect(() => {
@@ -866,6 +930,7 @@ export default function CatalogoPage() {
           onColorChange={(id, c) => setColors(prev => ({ ...prev, [id]: c }))}
           selectedQty={qtys[selected.id] || 1}
           onQtyChange={(id, q) => setQtys(prev => ({ ...prev, [id]: q }))}
+          reservations={reservations}
           onWhatsApp={p => { sendWA(p); setSelected(null); }}
           onAddCart={p => addToCart(p)}
           onPayMP={p => handlePayMP(p)}

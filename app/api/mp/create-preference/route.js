@@ -42,7 +42,7 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Correo electrónico inválido' }, { status: 400 });
     }
 
-    // ── 2. Obtener producto ──
+    // ── 2. Obtener producto (necesitamos precio y nombre para MP) ──
     const { data: product, error: prodError } = await supabaseAdmin
       .from('products')
       .select('*')
@@ -56,150 +56,107 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Este producto ya no está disponible' }, { status: 410 });
     }
 
-    // ── 3. Limpiar reservas expiradas antes de calcular stock disponible ──
-    await supabaseAdmin
-      .from('stock_reservations')
-      .update({ status: 'expired' })
-      .eq('status', 'pending')
-      .lt('expires_at', new Date().toISOString());
-
-    // ── 4. Calcular stock disponible real ──
-    // Si el producto tiene variantes, stock = stock de esa variante específica - reservas de esa variante
-    // Si no tiene variantes, stock = product.stock - reservas del producto
-
-    const productHasVariants = !!(product.variants && Array.isArray(product.variants.items) && product.variants.items.length > 0);
-    let baseStock = 0;
-
-    if (productHasVariants) {
-      const mode = product.variants.mode;
-      // Encontrar la variante específica
-      const variantItem = product.variants.items.find(it => {
-        const sizeMatch = mode === 'color_only' || (it.size === size);
-        const colorMatch = mode === 'size_only' || (it.color === color);
-        return sizeMatch && colorMatch;
-      });
-      if (!variantItem) {
-        return NextResponse.json({
-          error: 'Esta combinación de talla/color no existe',
-          available: 0,
-        }, { status: 409 });
-      }
-      baseStock = Number(variantItem.stock) || 0;
-    } else {
-      baseStock = Number(product.stock) || 0;
-    }
-
-    // Reservas activas para el mismo producto+variante
-    let reservationQuery = supabaseAdmin
-      .from('stock_reservations')
-      .select('qty, size, color')
-      .eq('product_id', productId)
-      .eq('status', 'pending');
-
-    const { data: activeReservations } = await reservationQuery;
-
-    // Filtrar reservas que coincidan con la variante específica
-    const matchingReservations = (activeReservations || []).filter(r => {
-      if (productHasVariants) {
-        const mode = product.variants.mode;
-        const sizeMatch = mode === 'color_only' || (r.size === size);
-        const colorMatch = mode === 'size_only' || (r.color === color);
-        return sizeMatch && colorMatch;
-      }
-      // Sin variantes: cualquier reserva del producto cuenta
-      return true;
-    });
-
-    const reservedQty = matchingReservations.reduce((s, r) => s + (r.qty || 0), 0);
-    const availableStock = baseStock - reservedQty;
-
-    if (availableStock < qty) {
-      return NextResponse.json({
-        error: 'Stock insuficiente',
-        available: availableStock,
-      }, { status: 409 });
-    }
-
-    // ── 5. Calcular precio (con descuento si aplica) ──
+    // ── 3. Calcular precio (con descuento si aplica) ──
     const basePrice = Number(product.price) || 0;
     const discount = Number(product.discount) || 0;
     const priceUnit = discount > 0 ? Math.round(basePrice * (1 - discount / 100)) : basePrice;
     const total = priceUnit * qty;
 
-    // ── 6. Crear reserva temporal (expira en 10 minutos) ──
+    // ── 4. RESERVA ATÓMICA con función SQL (previene race conditions) ──
+    // La función try_reserve_stock hace un LOCK de la fila del producto,
+    // verifica stock disponible (descontando reservas activas) e inserta
+    // la reserva en una sola transacción atómica. Si dos personas intentan
+    // comprar la última unidad al mismo tiempo, solo una pasa.
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    const { data: reservation, error: resError } = await supabaseAdmin
-      .from('stock_reservations')
-      .insert({
-        product_id: productId,
-        size: size || null,
-        color: color || null,
-        qty,
-        customer_name: customerName,
-        customer_phone: customerPhone,
-        customer_email: customerEmail,
-        customer_doc: customerDoc || null,
-        customer_address: customerAddress || null,
-        customer_city: customerCity || null,
-        customer_notes: customerNotes || null,
-        price_unit: priceUnit,
-        total,
-        status: 'pending',
-        expires_at: expiresAt,
-      })
-      .select()
-      .single();
 
-    if (resError) {
-      console.error('Error creando reserva:', resError);
-      return NextResponse.json({ error: 'No se pudo crear la reserva' }, { status: 500 });
+    const { data: reserveResult, error: rpcError } = await supabaseAdmin.rpc('try_reserve_stock', {
+      p_product_id: productId,
+      p_size: size || null,
+      p_color: color || null,
+      p_qty: qty,
+      p_customer_name: customerName,
+      p_customer_phone: customerPhone,
+      p_customer_email: customerEmail,
+      p_customer_doc: customerDoc || null,
+      p_customer_address: customerAddress || null,
+      p_customer_city: customerCity || null,
+      p_customer_notes: customerNotes || null,
+      p_price_unit: priceUnit,
+      p_total: total,
+      p_expires_at: expiresAt,
+    });
+
+    if (rpcError) {
+      console.error('Error en try_reserve_stock:', rpcError);
+      return NextResponse.json({ error: 'No se pudo procesar la reserva' }, { status: 500 });
     }
 
-    // ── 7. Crear preferencia en Mercado Pago ──
+    const result = Array.isArray(reserveResult) ? reserveResult[0] : reserveResult;
+    if (!result || !result.ok) {
+      return NextResponse.json({
+        error: result?.error_msg || 'Sin stock disponible',
+        available: result?.available ?? 0,
+      }, { status: 409 });
+    }
+
+    const reservationId = result.reservation_id;
+
+    // ── 5. Crear preferencia en Mercado Pago ──
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://splendoracol.site';
 
     const preference = new Preference(mpClient);
-    const prefData = await preference.create({
-      body: {
-        items: [
-          {
-            id: product.id,
-            title: `${product.name}${size ? ` - Talla ${size}` : ''}${color ? ` - ${color}` : ''}`,
-            quantity: qty,
-            unit_price: priceUnit,
-            currency_id: 'COP',
+    let prefData;
+    try {
+      prefData = await preference.create({
+        body: {
+          items: [
+            {
+              id: product.id,
+              title: `${product.name}${size ? ` - Talla ${size}` : ''}${color ? ` - ${color}` : ''}`,
+              quantity: qty,
+              unit_price: priceUnit,
+              currency_id: 'COP',
+            },
+          ],
+          payer: {
+            name: customerName,
+            email: customerEmail,
+            phone: { number: customerPhone },
           },
-        ],
-        payer: {
-          name: customerName,
-          email: customerEmail,
-          phone: { number: customerPhone },
+          back_urls: {
+            success: `${baseUrl}/pago/exito?r=${reservationId}`,
+            pending: `${baseUrl}/pago/pendiente?r=${reservationId}`,
+            failure: `${baseUrl}/pago/error?r=${reservationId}`,
+          },
+          auto_return: 'approved',
+          external_reference: reservationId,
+          notification_url: `${baseUrl}/api/mp/webhook`,
+          statement_descriptor: 'SPLENDORA',
         },
-        back_urls: {
-          success: `${baseUrl}/pago/exito?r=${reservation.id}`,
-          pending: `${baseUrl}/pago/pendiente?r=${reservation.id}`,
-          failure: `${baseUrl}/pago/error?r=${reservation.id}`,
-        },
-        auto_return: 'approved',
-        external_reference: reservation.id,
-        notification_url: `${baseUrl}/api/mp/webhook`,
-        statement_descriptor: 'SPLENDORA',
-      },
-    });
+      });
+    } catch (mpErr) {
+      // Si falla MP, cancelar la reserva para liberar el stock
+      console.error('Error creando preferencia MP:', mpErr);
+      await supabaseAdmin
+        .from('stock_reservations')
+        .update({ status: 'cancelled' })
+        .eq('id', reservationId);
+      return NextResponse.json({ error: 'Error generando el pago' }, { status: 500 });
+    }
 
-    // ── 8. Guardar preference_id en la reserva ──
+    // ── 6. Guardar preference_id en la reserva ──
     await supabaseAdmin
       .from('stock_reservations')
       .update({ mp_preference_id: prefData.id })
-      .eq('id', reservation.id);
+      .eq('id', reservationId);
 
-    // ── 9. Devolver al cliente el link de pago ──
+    // ── 7. Devolver al cliente el link de pago ──
     return NextResponse.json({
       success: true,
-      reservationId: reservation.id,
+      reservationId: reservationId,
       preferenceId: prefData.id,
       initPoint: prefData.init_point,
-      expiresAt: reservation.expires_at,
+      expiresAt: expiresAt,
     });
 
   } catch (err) {
