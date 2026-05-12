@@ -60,19 +60,54 @@ export async function POST(request) {
       .lt('expires_at', new Date().toISOString());
 
     // ── 4. Calcular stock disponible real ──
-    // Stock = product.stock − reservas activas pendientes para mismo producto/size/color
+    // Si el producto tiene variantes, stock = stock de esa variante específica - reservas de esa variante
+    // Si no tiene variantes, stock = product.stock - reservas del producto
+
+    const productHasVariants = !!(product.variants && Array.isArray(product.variants.items) && product.variants.items.length > 0);
+    let baseStock = 0;
+
+    if (productHasVariants) {
+      const mode = product.variants.mode;
+      // Encontrar la variante específica
+      const variantItem = product.variants.items.find(it => {
+        const sizeMatch = mode === 'color_only' || (it.size === size);
+        const colorMatch = mode === 'size_only' || (it.color === color);
+        return sizeMatch && colorMatch;
+      });
+      if (!variantItem) {
+        return NextResponse.json({
+          error: 'Esta combinación de talla/color no existe',
+          available: 0,
+        }, { status: 409 });
+      }
+      baseStock = Number(variantItem.stock) || 0;
+    } else {
+      baseStock = Number(product.stock) || 0;
+    }
+
+    // Reservas activas para el mismo producto+variante
     let reservationQuery = supabaseAdmin
       .from('stock_reservations')
-      .select('qty')
+      .select('qty, size, color')
       .eq('product_id', productId)
       .eq('status', 'pending');
 
-    if (size) reservationQuery = reservationQuery.eq('size', size);
-    if (color) reservationQuery = reservationQuery.eq('color', color);
-
     const { data: activeReservations } = await reservationQuery;
-    const reservedQty = (activeReservations || []).reduce((s, r) => s + (r.qty || 0), 0);
-    const availableStock = (product.stock || 0) - reservedQty;
+
+    // Filtrar reservas que coincidan con la variante específica
+    const matchingReservations = (activeReservations || []).filter(r => {
+      if (productHasVariants) {
+        const mode = product.variants.mode;
+        const sizeMatch = mode === 'color_only' || (r.size === size);
+        const colorMatch = mode === 'size_only' || (r.color === color);
+        return sizeMatch && colorMatch;
+      }
+      // Sin variantes: cualquier reserva del producto cuenta
+      return true;
+    });
+
+    const reservedQty = matchingReservations.reduce((s, r) => s + (r.qty || 0), 0);
+    const availableStock = baseStock - reservedQty;
 
     if (availableStock < qty) {
       return NextResponse.json({
