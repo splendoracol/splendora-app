@@ -100,7 +100,9 @@ function ExitoContent() {
         )}
 
         <a
-          href="https://wa.me/573172346822?text=Hola%2C+acabo+de+pagar+por+Mercado+Pago"
+          href={orderNumber
+            ? `https://wa.me/573172346822?text=${encodeURIComponent(`Hola SPLENDORA 👋\nAcabo de pagar por Mercado Pago.\nPedido #${orderNumber}\n\nQuedo pendiente al número de envío 🚚`)}`
+            : `https://wa.me/573172346822?text=${encodeURIComponent(`Hola SPLENDORA 👋\nAcabo de pagar por Mercado Pago.\n\nQuedo pendiente al número de envío 🚚`)}`}
           style={{
             display: 'block', padding: '14px 20px', background: '#25D366',
             color: '#FFF', borderRadius: 10, textDecoration: 'none',
