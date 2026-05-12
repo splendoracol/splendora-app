@@ -388,7 +388,7 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
   );
 }
 
-function CheckoutModal({ product, size, color, qty = 1, onClose }) {
+function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt, onClose }) {
   const [form, setForm] = useState({
     customerName: '', customerPhone: '', customerEmail: '', customerDoc: '',
     customerAddress: '', customerCity: '', customerNotes: '',
@@ -396,13 +396,16 @@ function CheckoutModal({ product, size, color, qty = 1, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // ── Contador de 10 minutos para completar el pago ──
-  const TOTAL_SECONDS = 10 * 60; // 10 minutos
-  const [secondsLeft, setSecondsLeft] = useState(TOTAL_SECONDS);
+  // ── Contador basado en expiresAt REAL de la reserva ──
+  const [secondsLeft, setSecondsLeft] = useState(() => {
+    if (!expiresAt) return 10 * 60;
+    const diff = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000);
+    return Math.max(0, diff);
+  });
   const [expired, setExpired] = useState(false);
 
   useEffect(() => {
-    if (loading) return; // No correr contador mientras está procesando
+    if (loading) return;
     if (secondsLeft <= 0) {
       setExpired(true);
       return;
@@ -415,12 +418,10 @@ function CheckoutModal({ product, size, color, qty = 1, onClose }) {
   const disc = product.discount > 0;
   const fp = disc ? Math.round(product.price * (1 - product.discount / 100)) : product.price;
 
-  // Verificar stock de la combinación
   const useVariants = hasVariants(product);
   const currentStock = useVariants ? getVariantStock(product, size, color) : (Number(product.stock) || 0);
   const isOutOfStock = currentStock <= 0;
 
-  // Formato del contador MM:SS
   const minutes = Math.floor(secondsLeft / 60);
   const seconds = secondsLeft % 60;
   const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
@@ -431,13 +432,28 @@ function CheckoutModal({ product, size, color, qty = 1, onClose }) {
     setError(null);
   }
 
-  // Validación simple de email
   function isValidEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
 
+  // Cuando el usuario cierra el modal sin completar el pago, cancelar la reserva
+  // para liberar el stock inmediatamente y no esperar a los 10 minutos.
+  async function handleClose() {
+    if (reservationId && !loading) {
+      // Llamar a cancelar (no esperamos respuesta, es fire-and-forget)
+      try {
+        fetch('/api/mp/cancel-reserve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reservationId }),
+          keepalive: true,
+        });
+      } catch {}
+    }
+    onClose();
+  }
+
   async function handleSubmit() {
-    // Validación
     if (expired) return setError('La reserva expiró. Cierra y vuelve a intentar.');
     if (isOutOfStock) return setError('Esta combinación ya no tiene stock');
     if (!form.customerName.trim()) return setError('Tu nombre es requerido');
@@ -456,10 +472,7 @@ function CheckoutModal({ product, size, color, qty = 1, onClose }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          productId: product.id,
-          size: size || null,
-          color: color || null,
-          qty: qty,
+          reservationId: reservationId,
           customerName: form.customerName.trim(),
           customerPhone: form.customerPhone.trim(),
           customerEmail: form.customerEmail.trim().toLowerCase(),
@@ -473,8 +486,8 @@ function CheckoutModal({ product, size, color, qty = 1, onClose }) {
       const data = await res.json();
 
       if (!res.ok) {
-        if (res.status === 409) {
-          setError('Lo sentimos, este producto se acaba de agotar 😔');
+        if (res.status === 410) {
+          setError('La reserva expiró. Cierra y vuelve a intentar.');
         } else {
           setError(data.error || 'Error al crear el pago. Intenta de nuevo.');
         }
@@ -482,7 +495,6 @@ function CheckoutModal({ product, size, color, qty = 1, onClose }) {
         return;
       }
 
-      // Redirigir a Mercado Pago
       if (data.initPoint) {
         window.location.href = data.initPoint;
       } else {
@@ -496,14 +508,14 @@ function CheckoutModal({ product, size, color, qty = 1, onClose }) {
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+    <div onClick={handleClose} style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 20, width: '100%', maxWidth: 440, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 2, background: '#FFF', padding: '16px 20px 10px', borderBottom: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontSize: 9, color: '#009EE3', fontWeight: 800, letterSpacing: 1 }}>PAGAR CON MERCADO PAGO</div>
             <div style={{ fontSize: 14, fontWeight: 800, marginTop: 2 }}>Datos para envío</div>
           </div>
-          <button onClick={onClose} style={{ background: '#F0F2F5', color: '#6B7280', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+          <button onClick={handleClose} style={{ background: '#F0F2F5', color: '#6B7280', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
 
         {/* Contador prominente */}
@@ -782,17 +794,15 @@ export default function CatalogoPage() {
   }
 
   async function handlePayMP(p) {
-    // Antes de abrir el checkout, refrescar reservas para ver el estado más reciente
+    // Refrescar reservas para ver estado actual (UI feedback)
     const latestReservations = await refreshReservations();
     const reservationsToCheck = latestReservations !== null ? latestReservations : reservations;
 
-    // Si tiene variantes, asegurar que haya una combinación seleccionada con stock
+    // Validar que la combinación seleccionada existe
     if (hasVariants(p)) {
       const mode = p.variants.mode;
       const currentSize = sizes[p.id];
       const currentColor = colors[p.id];
-
-      // Stock real = stock variante - reservas activas
       const variantStock = getVariantStock(p, currentSize, currentColor);
       const reserved = getReservedQty(reservationsToCheck, p.id, currentSize, currentColor, p);
       const realStock = Math.max(0, variantStock - reserved);
@@ -804,7 +814,6 @@ export default function CatalogoPage() {
         } else if (realStock > 0) {
           alert(`Solo quedan ${realStock} unidad${realStock === 1 ? '' : 'es'} disponible${realStock === 1 ? '' : 's'} de esta talla/color. Ajusta la cantidad.`);
         } else {
-          // Sin stock real: buscar otra variante con stock real
           const firstAvailable = p.variants.items.find(it => {
             const itStock = (Number(it.stock) || 0);
             if (itStock <= 0) return false;
@@ -825,18 +834,36 @@ export default function CatalogoPage() {
         }
         return;
       }
-    } else {
-      // Sin variantes: validar producto completo
-      const reserved = getReservedQty(reservationsToCheck, p.id, null, null, p);
-      const realStock = Math.max(0, (Number(p.stock) || 0) - reserved);
-      const wantedQty = qtys[p.id] || 1;
-      if (realStock < wantedQty) {
-        alert('Este producto ya no está disponible en la cantidad solicitada.');
+    }
+
+    // ── RESERVA REAL ATÓMICA antes de abrir el form ──
+    // Si esto falla, el form NO se abre (más profesional: nadie llena un form para que le digan "agotado" al final).
+    const qty = qtys[p.id] || 1;
+    const size = hasVariants(p) ? sizes[p.id] : null;
+    const color = hasVariants(p) ? colors[p.id] : null;
+    try {
+      const res = await fetch('/api/mp/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: p.id, size, color, qty }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        alert(data.error || 'No se pudo apartar el producto. Intenta de nuevo.');
+        await refreshReservations();
         return;
       }
+      // Reserva creada. Abrir checkout con el ID y la expiración real.
+      setSelected(null);
+      setCheckoutProduct({
+        ...p,
+        _reservationId: data.reservationId,
+        _expiresAt: data.expiresAt,
+      });
+    } catch (err) {
+      console.error(err);
+      alert('Error de conexión. Intenta de nuevo.');
     }
-    setSelected(null);
-    setCheckoutProduct(p);
   }
 
   if (loading) return (
@@ -987,7 +1014,13 @@ export default function CatalogoPage() {
           size={sizes[checkoutProduct.id] || (checkoutProduct.sizes && checkoutProduct.sizes.length > 0 ? checkoutProduct.sizes[0] : checkoutProduct.size)}
           color={colors[checkoutProduct.id] || (checkoutProduct.colors && checkoutProduct.colors.length > 0 ? checkoutProduct.colors[0] : checkoutProduct.color)}
           qty={qtys[checkoutProduct.id] || 1}
-          onClose={() => setCheckoutProduct(null)}
+          reservationId={checkoutProduct._reservationId}
+          expiresAt={checkoutProduct._expiresAt}
+          onClose={() => {
+            setCheckoutProduct(null);
+            // Refrescar reservas para que otros usuarios vean stock liberado
+            refreshReservations();
+          }}
         />
       )}
 
