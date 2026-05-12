@@ -700,24 +700,38 @@ export default function CatalogoPage() {
 
   // ── Cargar reservas activas (de otros clientes) y refrescar cada 30 segundos ──
   // Esto permite mostrar en tiempo real qué tallas/colores están temporalmente reservados.
-  useEffect(() => {
-    let intervalId;
-    async function fetchReservations() {
-      try {
-        const res = await fetch('/api/stock/reservations', { cache: 'no-store' });
-        if (res.ok) {
-          const json = await res.json();
-          setReservations(json.reservations || []);
-        }
-      } catch (err) {
-        // Silencioso: si falla el endpoint, simplemente no mostramos reservas
-        console.warn('No se pudieron cargar reservas:', err);
+  // Función reutilizable para refrescar reservas activas
+  async function refreshReservations() {
+    try {
+      const res = await fetch('/api/stock/reservations', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        setReservations(json.reservations || []);
+        return json.reservations || [];
       }
+    } catch (err) {
+      console.warn('No se pudieron cargar reservas:', err);
     }
-    fetchReservations();
-    intervalId = setInterval(fetchReservations, 30000); // refresh cada 30s
+    return null;
+  }
+
+  // Carga inicial + refresh periódico cada 30s
+  useEffect(() => {
+    refreshReservations();
+    const intervalId = setInterval(refreshReservations, 30000);
     return () => clearInterval(intervalId);
   }, []);
+
+  // Cuando se abre el modal de un producto, refrescar reservas inmediatamente
+  // para ver el estado más reciente (no esperar al refresh de 30s)
+  useEffect(() => {
+    if (selected) refreshReservations();
+  }, [selected]);
+
+  // Cuando se abre el checkout, refrescar reservas también
+  useEffect(() => {
+    if (checkoutProduct) refreshReservations();
+  }, [checkoutProduct]);
 
   useEffect(() => {
     if (!selected) return;
@@ -767,29 +781,58 @@ export default function CatalogoPage() {
     setCart(prev => [...prev, p]); setSelected(null); setShowCart(true);
   }
 
-  function handlePayMP(p) {
+  async function handlePayMP(p) {
+    // Antes de abrir el checkout, refrescar reservas para ver el estado más reciente
+    const latestReservations = await refreshReservations();
+    const reservationsToCheck = latestReservations !== null ? latestReservations : reservations;
+
     // Si tiene variantes, asegurar que haya una combinación seleccionada con stock
     if (hasVariants(p)) {
       const mode = p.variants.mode;
       const currentSize = sizes[p.id];
       const currentColor = colors[p.id];
 
-      // ¿La combinación actual tiene stock?
-      const hasStock = getVariantStock(p, currentSize, currentColor) > 0;
+      // Stock real = stock variante - reservas activas
+      const variantStock = getVariantStock(p, currentSize, currentColor);
+      const reserved = getReservedQty(reservationsToCheck, p.id, currentSize, currentColor, p);
+      const realStock = Math.max(0, variantStock - reserved);
+      const wantedQty = qtys[p.id] || 1;
 
-      if (!hasStock) {
-        // Buscar la primera variante con stock y pre-seleccionarla
-        const firstAvailable = p.variants.items.find(it => (Number(it.stock) || 0) > 0);
-        if (!firstAvailable) {
-          alert('Este producto está agotado');
-          return;
+      if (realStock < wantedQty) {
+        if (variantStock > 0 && realStock === 0) {
+          alert('Esta talla/color acaba de ser reservada por otro cliente. Por favor elige otra combinación o vuelve a intentarlo en 10 minutos.');
+        } else if (realStock > 0) {
+          alert(`Solo quedan ${realStock} unidad${realStock === 1 ? '' : 'es'} disponible${realStock === 1 ? '' : 's'} de esta talla/color. Ajusta la cantidad.`);
+        } else {
+          // Sin stock real: buscar otra variante con stock real
+          const firstAvailable = p.variants.items.find(it => {
+            const itStock = (Number(it.stock) || 0);
+            if (itStock <= 0) return false;
+            const itReserved = getReservedQty(reservationsToCheck, p.id, it.size, it.color, p);
+            return (itStock - itReserved) > 0;
+          });
+          if (!firstAvailable) {
+            alert('Este producto está temporalmente agotado.');
+            return;
+          }
+          if (mode !== 'color_only' && firstAvailable.size) {
+            setSizes(prev => ({ ...prev, [p.id]: firstAvailable.size }));
+          }
+          if (mode !== 'size_only' && firstAvailable.color) {
+            setColors(prev => ({ ...prev, [p.id]: firstAvailable.color }));
+          }
+          alert('Esta combinación ya no está disponible. Te seleccionamos otra para que continúes.');
         }
-        if (mode !== 'color_only' && firstAvailable.size) {
-          setSizes(prev => ({ ...prev, [p.id]: firstAvailable.size }));
-        }
-        if (mode !== 'size_only' && firstAvailable.color) {
-          setColors(prev => ({ ...prev, [p.id]: firstAvailable.color }));
-        }
+        return;
+      }
+    } else {
+      // Sin variantes: validar producto completo
+      const reserved = getReservedQty(reservationsToCheck, p.id, null, null, p);
+      const realStock = Math.max(0, (Number(p.stock) || 0) - reserved);
+      const wantedQty = qtys[p.id] || 1;
+      if (realStock < wantedQty) {
+        alert('Este producto ya no está disponible en la cantidad solicitada.');
+        return;
       }
     }
     setSelected(null);
