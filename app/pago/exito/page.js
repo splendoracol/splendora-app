@@ -14,31 +14,44 @@ function ExitoContent() {
 
   useEffect(() => {
     // Esperamos unos segundos para que el webhook procese el pago
-    // y luego consultamos el número de pedido desde nuestra API
+    // y luego consultamos el número de pedido desde nuestra API.
+    // Si el webhook no funcionó, el endpoint check-order también puede
+    // confirmar el pago directamente con MP y crear el pedido (respaldo).
     if (!reservationId) {
       setLoading(false);
       return;
     }
+    // MP envía estos params en el redirect: payment_id o collection_id
+    const collectionId = searchParams.get('collection_id');
+    const effectivePaymentId = paymentId || collectionId;
+
     let attempts = 0;
     const checkOrder = async () => {
       try {
-        const res = await fetch(`/api/mp/check-order?r=${reservationId}`);
+        const url = effectivePaymentId
+          ? `/api/mp/check-order?r=${reservationId}&payment_id=${effectivePaymentId}`
+          : `/api/mp/check-order?r=${reservationId}`;
+        const res = await fetch(url);
         const data = await res.json();
         if (data.orderNumber) {
           setOrderNumber(data.orderNumber);
           setLoading(false);
           return;
         }
+        if (data.status === 'cancelled' || data.status === 'expired') {
+          setLoading(false);
+          return;
+        }
       } catch (e) {}
       attempts++;
-      if (attempts < 10) {
+      if (attempts < 15) {
         setTimeout(checkOrder, 2000);
       } else {
         setLoading(false);
       }
     };
     checkOrder();
-  }, [reservationId]);
+  }, [reservationId, paymentId]);
 
   return (
     <div style={{
@@ -87,7 +100,7 @@ function ExitoContent() {
         )}
 
         <a
-          href="https://wa.me/573172346822?text=Hola%2C+acabo+de+pagar+por+Mercado+Pago"
+          href="https://wa.me/573001234567?text=Hola%2C+acabo+de+pagar+por+Mercado+Pago"
           style={{
             display: 'block', padding: '14px 20px', background: '#25D366',
             color: '#FFF', borderRadius: 10, textDecoration: 'none',
