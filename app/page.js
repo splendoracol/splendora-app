@@ -1822,11 +1822,10 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
   const mg = f.price > 0 ? ((f.price - ct) / f.price * 100).toFixed(1) : 0;
 
   // ── Stock calculado desde variantes (si están activas) ──
-  const hasVariants = f.variants && Array.isArray(f.variants.items) && f.variants.items.length > 0;
+  const hasVariants = !!(f.variants && Array.isArray(f.variants.items) && f.variants.items.length > 0);
   const variantStockTotal = hasVariants
     ? f.variants.items.reduce((s, it) => s + (Number(it.stock) || 0), 0)
     : 0;
-  const effectiveStock = hasVariants ? variantStockTotal : (Number(f.stock) || 0);
 
   // ── Helpers para variantes ──
   function toggleVariants() {
@@ -2210,9 +2209,9 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
           if (isDuplicate) return alert('Ya existe un producto con ese nombre. Cambia el nombre antes de guardar.');
           if (f.productCategories.length === 0) return alert('Selecciona al menos una categoría');
 
-          // Validar variantes si están activas
-          if (hasVariants) {
-            if (f.variants.items.length === 0) {
+          // Validar variantes si están activas (switch ON)
+          if (f.variants !== null) {
+            if (!f.variants.items || f.variants.items.length === 0) {
               return alert('Activaste variantes pero no agregaste ninguna. Agrega al menos una o desactiva el switch.');
             }
             for (let i = 0; i < f.variants.items.length; i++) {
@@ -2222,6 +2221,9 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
               }
               if (f.variants.mode !== 'size_only' && !it.color) {
                 return alert(`La variante #${i + 1} no tiene color.`);
+              }
+              if (Number(it.stock) < 0) {
+                return alert(`La variante #${i + 1} tiene stock negativo.`);
               }
             }
             // Detectar duplicados
