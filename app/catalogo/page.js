@@ -392,6 +392,7 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
   const [form, setForm] = useState({
     customerName: '', customerPhone: '', customerEmail: '', customerDoc: '',
     customerAddress: '', customerCity: '', customerNotes: '',
+    marketingOptin: true, // por defecto ✅ marcado (opt-out)
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -480,6 +481,7 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
           customerAddress: form.customerAddress.trim(),
           customerCity: form.customerCity.trim(),
           customerNotes: form.customerNotes.trim() || null,
+          marketingOptin: form.marketingOptin,
         }),
       });
 
@@ -558,6 +560,25 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
           <Field label="Dirección de entrega *" value={form.customerAddress} onChange={v => update('customerAddress', v)} placeholder="Calle, número, barrio" disabled={loading || expired} />
           <Field label="Ciudad *" value={form.customerCity} onChange={v => update('customerCity', v)} disabled={loading || expired} />
           <Field label="Notas (opcional)" value={form.customerNotes} onChange={v => update('customerNotes', v)} placeholder="Algo más que debamos saber" disabled={loading || expired} />
+
+          {/* Checkbox de marketing: por defecto activado, cliente puede destildar */}
+          <label style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+            padding: '12px', background: '#F9FAFB', borderRadius: 10, marginTop: 4,
+            cursor: (loading || expired) ? 'not-allowed' : 'pointer',
+            opacity: (loading || expired) ? 0.6 : 1,
+          }}>
+            <input
+              type="checkbox"
+              checked={form.marketingOptin}
+              onChange={e => update('marketingOptin', e.target.checked)}
+              disabled={loading || expired}
+              style={{ marginTop: 2, width: 16, height: 16, accentColor: '#1A1D23', cursor: 'inherit' }}
+            />
+            <span style={{ fontSize: 11, color: '#4B5563', lineHeight: 1.5 }}>
+              Quiero recibir <strong style={{ color: '#1A1D23' }}>novedades y promociones</strong> de SPLENDORA por correo. Puedes darte de baja en cualquier momento.
+            </span>
+          </label>
 
           {error && (
             <div style={{ marginTop: 10, padding: '10px 12px', background: '#FEE2E2', color: '#991B1B', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>

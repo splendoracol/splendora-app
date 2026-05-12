@@ -16,7 +16,7 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const {
-      reservationId, // ← ID de reserva creada en /api/mp/reserve
+      reservationId,
       customerName,
       customerPhone,
       customerEmail,
@@ -24,6 +24,7 @@ export async function POST(request) {
       customerAddress,
       customerCity,
       customerNotes,
+      marketingOptin,
     } = body;
 
     // ── 1. Validación básica ──
@@ -81,6 +82,7 @@ export async function POST(request) {
         customer_address: customerAddress || null,
         customer_city: customerCity || null,
         customer_notes: customerNotes || null,
+        marketing_optin: marketingOptin !== false, // por defecto true
       })
       .eq('id', reservationId);
 

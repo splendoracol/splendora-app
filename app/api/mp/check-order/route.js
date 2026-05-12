@@ -361,5 +361,19 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
     })
     .eq('id', reservation.id);
 
+  // Registrar/actualizar cliente en email_list (para email marketing)
+  try {
+    await supabaseAdmin.rpc('upsert_email_customer', {
+      p_email: reservation.customer_email,
+      p_name: reservation.customer_name,
+      p_phone: reservation.customer_phone,
+      p_city: reservation.customer_city,
+      p_marketing_optin: reservation.marketing_optin !== false,
+      p_order_total: orderTotal,
+    });
+  } catch (err) {
+    console.error('[Check-order] Error en upsert email_list:', err);
+  }
+
   return nextOrderNumber;
 }

@@ -8,6 +8,7 @@ const TABS = [
   { id: 'orders', label: 'Pedidos' },
   { id: 'finances', label: 'Finanzas' },
   { id: 'catalog', label: 'Catálogo' },
+  { id: 'customers', label: 'Clientes' },
   { id: 'tools', label: 'Más' },
 ];
 
@@ -361,6 +362,12 @@ export default function HomePage() {
   // estructura: { "orderId_itemIdx_s1": true/false, ... }
   const [payouts, setPayouts] = useState({});
 
+  // Lista de clientes (email_list) para sección Clientes
+  const [emailList, setEmailList] = useState([]);
+  const [customerFilter, setCustomerFilter] = useState('all'); // all | optin | recurring
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerCityFilter, setCustomerCityFilter] = useState('');
+
   useEffect(() => {
     try {
       const s = localStorage.getItem('dash_socias');
@@ -408,7 +415,7 @@ export default function HomePage() {
   }, []);
 
   async function loadAll() {
-    const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }, { data: cats }, { data: po }] = await Promise.all([
+    const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }, { data: cats }, { data: po }, { data: customers }] = await Promise.all([
       supabase.from('products').select('*').order('created_at', { ascending: false }),
       supabase.from('orders').select('*').order('created_at', { ascending: false }),
       supabase.from('expenses').select('*').order('created_at', { ascending: false }),
@@ -416,8 +423,10 @@ export default function HomePage() {
       supabase.from('catalog_config').select('*').eq('id', 1).single(),
       supabase.from('categories').select('name').order('name'),
       supabase.from('partner_payouts').select('*'),
+      supabase.from('email_list').select('*').order('last_order_date', { ascending: false }),
     ]);
     setProducts(p || []); setOrders(o || []); setExpenses(e || []);
+    setEmailList(customers || []);
     if (c) setConfig(c);
     if (cc) setCatCfg(cc);
     if (cats && cats.length > 0) setCategories(cats.map(x => x.name));
@@ -1188,7 +1197,16 @@ export default function HomePage() {
               <div key={o.id} className="neu-card" style={{ padding: 14, marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{o.customer_name}{o.city ? <span style={{ fontSize: 10, color: '#6B7280', fontWeight: 500 }}> · 📍 {o.city}</span> : null}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>
+                      {o.order_number && <span style={{ color: '#4A6FA5', fontWeight: 800 }}>#{o.order_number} · </span>}
+                      {o.customer_name}{o.city ? <span style={{ fontSize: 10, color: '#6B7280', fontWeight: 500 }}> · 📍 {o.city}</span> : null}
+                    </div>
+                    {o.customer_email && (
+                      <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span>📧</span>
+                        <a href={`mailto:${o.customer_email}`} style={{ color: '#6B7280', textDecoration: 'none' }}>{o.customer_email}</a>
+                      </div>
+                    )}
                     {/* Miniaturas de productos */}
                     {itemThumbs.length > 0 && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
@@ -1432,6 +1450,19 @@ export default function HomePage() {
               ))}
             </div>
           </div>
+        )}
+
+        {/* ═══ CUSTOMERS ═══ */}
+        {tab === 'customers' && (
+          <CustomersSection
+            emailList={emailList}
+            filter={customerFilter}
+            setFilter={setCustomerFilter}
+            search={customerSearch}
+            setSearch={setCustomerSearch}
+            cityFilter={customerCityFilter}
+            setCityFilter={setCustomerCityFilter}
+          />
         )}
 
         {/* ═══ TOOLS ═══ */}
@@ -3051,6 +3082,196 @@ function BulkForm({ categories, existingProducts = [], onSave }) {
       <button className="neu-btn neu-btn-accent" style={{ width: '100%', ...(anyDuplicate ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }} onClick={handleSave} disabled={saving || anyDuplicate}>
         {saving ? 'Guardando...' : `📦 Guardar ${rows.filter(r => r.name.trim()).length} producto(s)`}
       </button>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// CUSTOMERS SECTION — Lista de clientes para email marketing
+// ════════════════════════════════════════════════════════════
+function CustomersSection({ emailList, filter, setFilter, search, setSearch, cityFilter, setCityFilter }) {
+  // Stats globales
+  const totalCustomers = emailList.length;
+  const optInCount = emailList.filter(c => c.marketing_optin).length;
+  const recurringCount = emailList.filter(c => (c.total_orders || 0) >= 2).length;
+  const totalRevenue = emailList.reduce((s, c) => s + (Number(c.total_spent) || 0), 0);
+  const avgTicket = totalCustomers > 0 ? totalRevenue / emailList.reduce((s, c) => s + (c.total_orders || 0), 0 || 1) : 0;
+
+  // Ciudades únicas para el filtro
+  const cities = [...new Set(emailList.map(c => c.city).filter(Boolean))].sort();
+
+  // Aplicar filtros
+  const filtered = emailList.filter(c => {
+    if (filter === 'optin' && !c.marketing_optin) return false;
+    if (filter === 'recurring' && (c.total_orders || 0) < 2) return false;
+    if (cityFilter && c.city !== cityFilter) return false;
+    if (search) {
+      const s = search.toLowerCase();
+      const matchName = (c.name || '').toLowerCase().includes(s);
+      const matchEmail = (c.email || '').toLowerCase().includes(s);
+      const matchPhone = (c.phone || '').includes(s);
+      if (!matchName && !matchEmail && !matchPhone) return false;
+    }
+    return true;
+  });
+
+  // Exportar CSV
+  function exportCSV() {
+    if (filtered.length === 0) {
+      alert('No hay clientes para exportar con los filtros actuales');
+      return;
+    }
+    const headers = ['Email', 'Nombre', 'Telefono', 'Ciudad', 'Acepta Marketing', 'Pedidos', 'Total Gastado', 'Primera Compra', 'Ultima Compra'];
+    const rows = filtered.map(c => [
+      c.email || '',
+      (c.name || '').replace(/"/g, '""'),
+      c.phone || '',
+      (c.city || '').replace(/"/g, '""'),
+      c.marketing_optin ? 'Sí' : 'No',
+      c.total_orders || 0,
+      Math.round(Number(c.total_spent) || 0),
+      c.first_order_date ? new Date(c.first_order_date).toLocaleDateString('es-CO') : '',
+      c.last_order_date ? new Date(c.last_order_date).toLocaleDateString('es-CO') : '',
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const dateStr = new Date().toISOString().split('T')[0];
+    a.download = `splendora-clientes-${dateStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const cur = (n) => `$${Math.round(Number(n) || 0).toLocaleString('es-CO')}`;
+
+  return (
+    <div>
+      <h2 style={{ margin: '0 0 14px', fontSize: 18, fontWeight: 800 }}>Clientes</h2>
+
+      {/* Estadísticas */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 14 }}>
+        <div className="neu-card neu-pressed" style={{ padding: '10px 12px' }}>
+          <div style={{ fontSize: 9, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>Total clientes</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#1A1D23', marginTop: 4 }}>{totalCustomers}</div>
+        </div>
+        <div className="neu-card neu-pressed" style={{ padding: '10px 12px' }}>
+          <div style={{ fontSize: 9, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>Acepta marketing</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#10B981', marginTop: 4 }}>{optInCount}</div>
+        </div>
+        <div className="neu-card neu-pressed" style={{ padding: '10px 12px' }}>
+          <div style={{ fontSize: 9, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>Recurrentes (2+)</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#4A6FA5', marginTop: 4 }}>{recurringCount}</div>
+        </div>
+        <div className="neu-card neu-pressed" style={{ padding: '10px 12px' }}>
+          <div style={{ fontSize: 9, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>Ticket promedio</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#1A1D23', marginTop: 4 }}>{cur(avgTicket)}</div>
+        </div>
+      </div>
+
+      {/* Filtros y búsqueda */}
+      <div className="neu-card" style={{ marginBottom: 12 }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="🔍 Buscar por nombre, email o teléfono..."
+          style={{
+            width: '100%', padding: 10, border: 'none', borderRadius: 8,
+            background: '#F0F2F5', fontSize: 12, marginBottom: 10,
+            boxShadow: 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
+            fontFamily: "'Montserrat', sans-serif",
+          }}
+        />
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {[
+            { id: 'all', label: 'Todos' },
+            { id: 'optin', label: '✓ Acepta marketing' },
+            { id: 'recurring', label: 'Recurrentes' },
+          ].map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => setFilter(opt.id)}
+              style={{
+                padding: '6px 10px', fontSize: 11, fontWeight: 700,
+                background: filter === opt.id ? '#1A1D23' : '#F0F2F5',
+                color: filter === opt.id ? '#FFF' : '#6B7280',
+                border: 'none', borderRadius: 8, cursor: 'pointer',
+                boxShadow: filter === opt.id ? 'none' : 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
+                fontFamily: "'Montserrat', sans-serif",
+              }}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {cities.length > 0 && (
+          <select
+            value={cityFilter}
+            onChange={e => setCityFilter(e.target.value)}
+            style={{
+              width: '100%', padding: 10, border: 'none', borderRadius: 8,
+              background: '#F0F2F5', fontSize: 12, marginBottom: 10,
+              boxShadow: 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
+              fontFamily: "'Montserrat', sans-serif",
+            }}>
+            <option value="">Todas las ciudades</option>
+            {cities.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+        <button
+          className="neu-btn neu-btn-accent"
+          style={{ width: '100%' }}
+          onClick={exportCSV}>
+          ⬇ Exportar CSV ({filtered.length} {filtered.length === 1 ? 'cliente' : 'clientes'})
+        </button>
+      </div>
+
+      {/* Lista de clientes */}
+      {filtered.length === 0 ? (
+        <div className="neu-card neu-pressed" style={{ padding: 20, textAlign: 'center', color: '#6B7280', fontSize: 12 }}>
+          {emailList.length === 0
+            ? 'Aún no hay clientes registrados. Aparecerán automáticamente cuando se confirme un pago.'
+            : 'No hay clientes con los filtros seleccionados.'}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {filtered.map(c => (
+            <div key={c.id} className="neu-card" style={{ padding: '12px 14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>
+                    {c.name || '(sin nombre)'}
+                    {c.marketing_optin && (
+                      <span style={{ marginLeft: 6, padding: '2px 6px', background: '#D1FAE5', color: '#065F46', fontSize: 9, fontWeight: 700, borderRadius: 4 }}>✓ MKT</span>
+                    )}
+                    {(c.total_orders || 0) >= 2 && (
+                      <span style={{ marginLeft: 4, padding: '2px 6px', background: '#DBEAFE', color: '#1E40AF', fontSize: 9, fontWeight: 700, borderRadius: 4 }}>RECURRENTE</span>
+                    )}
+                  </div>
+                  <a href={`mailto:${c.email}`} style={{ fontSize: 11, color: '#4A6FA5', textDecoration: 'none', display: 'block', marginBottom: 2 }}>
+                    📧 {c.email}
+                  </a>
+                  {c.phone && (
+                    <a href={`https://wa.me/${(c.phone || '').replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#25D366', textDecoration: 'none', display: 'block', marginBottom: 2 }}>
+                      💬 {c.phone}
+                    </a>
+                  )}
+                  {c.city && <div style={{ fontSize: 10, color: '#6B7280' }}>📍 {c.city}</div>}
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 800, fontSize: 14, color: '#1A1D23' }}>{cur(c.total_spent)}</div>
+                  <div style={{ fontSize: 10, color: '#6B7280' }}>{c.total_orders} {c.total_orders === 1 ? 'pedido' : 'pedidos'}</div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#9CA3AF', borderTop: '1px solid #E5E7EB', paddingTop: 6 }}>
+                <span>1ª compra: {c.first_order_date ? new Date(c.first_order_date).toLocaleDateString('es-CO') : '—'}</span>
+                <span>Última: {c.last_order_date ? new Date(c.last_order_date).toLocaleDateString('es-CO') : '—'}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
