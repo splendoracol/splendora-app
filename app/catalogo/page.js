@@ -34,7 +34,7 @@ function PhotoNav({ photos, big }) {
   );
 }
 
-function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, selectedSize, onSizeChange, selectedColor, onColorChange }) {
+function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, selectedSize, onSizeChange, selectedColor, onColorChange }) {
   if (!product) return null;
   const p = product;
   const photos = [p.photo_url, p.photo_url_2, ...(p.extra_photos || [])].filter(Boolean);
@@ -103,11 +103,175 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, selectedSiz
           {allColors.length === 1 && <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>Color: {allColors[0]}</div>}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {!p.hide_price && (
+              <button onClick={() => onPayMP(p)} style={{ width: '100%', padding: '14px', background: 'linear-gradient(135deg, #00B1EA 0%, #009EE3 100%)', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 800, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif", boxShadow: '0 4px 12px rgba(0,158,227,0.3)' }}>💳 Pagar con Mercado Pago</button>
+            )}
             <button onClick={() => onWhatsApp(p)} style={{ width: '100%', padding: '13px', background: '#25D366', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif" }}>💬 Preguntar por WhatsApp</button>
             <button onClick={() => onAddCart(p)} style={{ width: '100%', padding: '13px', background: '#F0F2F5', color: '#1A1D23', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif", boxShadow: '3px 3px 6px #D1D3D6, -3px -3px 6px #FFFFFF' }}>🛒 Agregar al carrito</button>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function CheckoutModal({ product, size, color, onClose }) {
+  const [form, setForm] = useState({
+    customerName: '', customerPhone: '', customerDoc: '',
+    customerAddress: '', customerCity: '', customerNotes: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  if (!product) return null;
+  const disc = product.discount > 0;
+  const fp = disc ? Math.round(product.price * (1 - product.discount / 100)) : product.price;
+
+  function update(field, value) {
+    setForm(prev => ({ ...prev, [field]: value }));
+    setError(null);
+  }
+
+  async function handleSubmit() {
+    // Validación
+    if (!form.customerName.trim()) return setError('Tu nombre es requerido');
+    if (!form.customerPhone.trim()) return setError('Tu celular es requerido');
+    if (form.customerPhone.replace(/\D/g, '').length < 7) return setError('Celular inválido');
+    if (!form.customerAddress.trim()) return setError('La dirección es requerida');
+    if (!form.customerCity.trim()) return setError('La ciudad es requerida');
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/mp/create-preference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: product.id,
+          size: size || null,
+          color: color || null,
+          qty: 1,
+          customerName: form.customerName.trim(),
+          customerPhone: form.customerPhone.trim(),
+          customerDoc: form.customerDoc.trim() || null,
+          customerAddress: form.customerAddress.trim(),
+          customerCity: form.customerCity.trim(),
+          customerNotes: form.customerNotes.trim() || null,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (res.status === 409) {
+          setError('Lo sentimos, este producto se acaba de agotar 😔');
+        } else {
+          setError(data.error || 'Error al crear el pago. Intenta de nuevo.');
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Redirigir a Mercado Pago
+      if (data.initPoint) {
+        window.location.href = data.initPoint;
+      } else {
+        setError('No se pudo generar el link de pago');
+        setLoading(false);
+      }
+    } catch (e) {
+      setError('Error de conexión. Intenta de nuevo.');
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 20, width: '100%', maxWidth: 440, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ position: 'sticky', top: 0, zIndex: 2, background: '#FFF', padding: '16px 20px 10px', borderBottom: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 9, color: '#009EE3', fontWeight: 800, letterSpacing: 1 }}>PAGAR CON MERCADO PAGO</div>
+            <div style={{ fontSize: 14, fontWeight: 800, marginTop: 2 }}>Datos para envío</div>
+          </div>
+          <button onClick={onClose} style={{ background: '#F0F2F5', color: '#6B7280', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        </div>
+
+        {/* Resumen del producto */}
+        <div style={{ padding: '14px 20px', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
+          <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 2 }}>{product.code}</div>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{product.name}</div>
+          <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6 }}>
+            {size && <>Talla: <strong>{size}</strong></>}
+            {size && color && <> · </>}
+            {color && <>Color: <strong>{color}</strong></>}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 8 }}>
+            <span style={{ fontSize: 11, color: '#6B7280' }}>Total a pagar</span>
+            <span style={{ fontSize: 22, fontWeight: 800, color: '#009EE3' }}>{cur(fp)}</span>
+          </div>
+        </div>
+
+        {/* Formulario */}
+        <div style={{ padding: '16px 20px' }}>
+          <Field label="Nombre completo *" value={form.customerName} onChange={v => update('customerName', v)} disabled={loading} />
+          <Field label="Celular *" value={form.customerPhone} onChange={v => update('customerPhone', v)} type="tel" placeholder="3001234567" disabled={loading} />
+          <Field label="Cédula" value={form.customerDoc} onChange={v => update('customerDoc', v)} type="tel" placeholder="Opcional" disabled={loading} />
+          <Field label="Dirección de entrega *" value={form.customerAddress} onChange={v => update('customerAddress', v)} placeholder="Calle, número, barrio" disabled={loading} />
+          <Field label="Ciudad *" value={form.customerCity} onChange={v => update('customerCity', v)} disabled={loading} />
+          <Field label="Notas (opcional)" value={form.customerNotes} onChange={v => update('customerNotes', v)} placeholder="Algo más que debamos saber" disabled={loading} />
+
+          {error && (
+            <div style={{ marginTop: 10, padding: '10px 12px', background: '#FEE2E2', color: '#991B1B', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>
+              ⚠ {error}
+            </div>
+          )}
+
+          <div style={{ padding: '10px 12px', background: '#EFF6FF', borderRadius: 8, fontSize: 11, color: '#1E40AF', marginTop: 12, lineHeight: 1.5 }}>
+            <strong>🔒 Pago seguro</strong><br />
+            Te llevaremos a Mercado Pago. Tu producto queda apartado 20 minutos mientras pagas.
+          </div>
+
+          <button onClick={handleSubmit} disabled={loading} style={{
+            width: '100%', marginTop: 14, padding: '14px',
+            background: loading ? '#9CA3AF' : 'linear-gradient(135deg, #00B1EA 0%, #009EE3 100%)',
+            color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 800,
+            cursor: loading ? 'wait' : 'pointer', fontFamily: "'Montserrat', sans-serif",
+            boxShadow: loading ? 'none' : '0 4px 12px rgba(0,158,227,0.3)',
+          }}>
+            {loading ? 'Generando pago…' : `💳 Pagar ${cur(fp)}`}
+          </button>
+
+          <button onClick={onClose} disabled={loading} style={{
+            width: '100%', marginTop: 8, padding: '12px', background: 'transparent',
+            color: '#6B7280', border: 'none', borderRadius: 12, fontSize: 12, fontWeight: 600,
+            cursor: loading ? 'wait' : 'pointer', fontFamily: "'Montserrat', sans-serif",
+          }}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, type = 'text', placeholder = '', disabled }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 10, color: '#6B7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+        style={{
+          width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #E5E7EB',
+          fontSize: 13, fontFamily: "'Montserrat', sans-serif", outline: 'none',
+          background: disabled ? '#F9FAFB' : '#FFF',
+          boxSizing: 'border-box',
+        }}
+      />
     </div>
   );
 }
@@ -174,6 +338,7 @@ export default function CatalogoPage() {
   const [cart, setCart] = useState([]);
   const [showCart, setShowCart] = useState(false);
   const [categories, setCategories] = useState(CATEGORIES_FALLBACK);
+  const [checkoutProduct, setCheckoutProduct] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -219,6 +384,11 @@ export default function CatalogoPage() {
   function addToCart(p) {
     if (cart.find(x => x.id === p.id)) { alert('Ya está en el carrito'); return; }
     setCart(prev => [...prev, p]); setSelected(null); setShowCart(true);
+  }
+
+  function handlePayMP(p) {
+    setSelected(null);
+    setCheckoutProduct(p);
   }
 
   if (loading) return (
@@ -352,6 +522,17 @@ export default function CatalogoPage() {
           onColorChange={(id, c) => setColors(prev => ({ ...prev, [id]: c }))}
           onWhatsApp={p => { sendWA(p); setSelected(null); }}
           onAddCart={p => addToCart(p)}
+          onPayMP={p => handlePayMP(p)}
+        />
+      )}
+
+      {/* CHECKOUT MERCADO PAGO MODAL */}
+      {checkoutProduct && (
+        <CheckoutModal
+          product={checkoutProduct}
+          size={sizes[checkoutProduct.id] || (checkoutProduct.sizes && checkoutProduct.sizes.length > 0 ? checkoutProduct.sizes[0] : checkoutProduct.size)}
+          color={colors[checkoutProduct.id] || (checkoutProduct.colors && checkoutProduct.colors.length > 0 ? checkoutProduct.colors[0] : checkoutProduct.color)}
+          onClose={() => setCheckoutProduct(null)}
         />
       )}
 
