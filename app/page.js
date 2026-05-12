@@ -408,6 +408,7 @@ export default function HomePage() {
       extra_photos: prod.extra_photos || [],
       discount: prod.discount || 0,
       hide_price: prod.hide_price || false,
+      variants: prod.variants || null,
     };
     try {
       if (editId) {
