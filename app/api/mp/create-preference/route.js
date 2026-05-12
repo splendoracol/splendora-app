@@ -24,6 +24,7 @@ export async function POST(request) {
       qty,
       customerName,
       customerPhone,
+      customerEmail,
       customerDoc,
       customerAddress,
       customerCity,
@@ -36,6 +37,9 @@ export async function POST(request) {
     }
     if (!customerName || !customerPhone) {
       return NextResponse.json({ error: 'Nombre y celular requeridos' }, { status: 400 });
+    }
+    if (!customerEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail)) {
+      return NextResponse.json({ error: 'Correo electrónico inválido' }, { status: 400 });
     }
 
     // ── 2. Obtener producto ──
@@ -122,7 +126,8 @@ export async function POST(request) {
     const priceUnit = discount > 0 ? Math.round(basePrice * (1 - discount / 100)) : basePrice;
     const total = priceUnit * qty;
 
-    // ── 6. Crear reserva temporal ──
+    // ── 6. Crear reserva temporal (expira en 10 minutos) ──
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const { data: reservation, error: resError } = await supabaseAdmin
       .from('stock_reservations')
       .insert({
@@ -132,6 +137,7 @@ export async function POST(request) {
         qty,
         customer_name: customerName,
         customer_phone: customerPhone,
+        customer_email: customerEmail,
         customer_doc: customerDoc || null,
         customer_address: customerAddress || null,
         customer_city: customerCity || null,
@@ -139,6 +145,7 @@ export async function POST(request) {
         price_unit: priceUnit,
         total,
         status: 'pending',
+        expires_at: expiresAt,
       })
       .select()
       .single();
@@ -165,6 +172,7 @@ export async function POST(request) {
         ],
         payer: {
           name: customerName,
+          email: customerEmail,
           phone: { number: customerPhone },
         },
         back_urls: {

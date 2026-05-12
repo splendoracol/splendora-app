@@ -100,7 +100,7 @@ function ExitoContent() {
         )}
 
         <a
-          href="https://wa.me/573001234567?text=Hola%2C+acabo+de+pagar+por+Mercado+Pago"
+          href="https://wa.me/573172346822?text=Hola%2C+acabo+de+pagar+por+Mercado+Pago"
           style={{
             display: 'block', padding: '14px 20px', background: '#25D366',
             color: '#FFF', borderRadius: 10, textDecoration: 'none',

@@ -313,11 +313,26 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
 
 function CheckoutModal({ product, size, color, onClose }) {
   const [form, setForm] = useState({
-    customerName: '', customerPhone: '', customerDoc: '',
+    customerName: '', customerPhone: '', customerEmail: '', customerDoc: '',
     customerAddress: '', customerCity: '', customerNotes: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // ── Contador de 10 minutos para completar el pago ──
+  const TOTAL_SECONDS = 10 * 60; // 10 minutos
+  const [secondsLeft, setSecondsLeft] = useState(TOTAL_SECONDS);
+  const [expired, setExpired] = useState(false);
+
+  useEffect(() => {
+    if (loading) return; // No correr contador mientras está procesando
+    if (secondsLeft <= 0) {
+      setExpired(true);
+      return;
+    }
+    const t = setTimeout(() => setSecondsLeft(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [secondsLeft, loading]);
 
   if (!product) return null;
   const disc = product.discount > 0;
@@ -328,17 +343,31 @@ function CheckoutModal({ product, size, color, onClose }) {
   const currentStock = useVariants ? getVariantStock(product, size, color) : (Number(product.stock) || 0);
   const isOutOfStock = currentStock <= 0;
 
+  // Formato del contador MM:SS
+  const minutes = Math.floor(secondsLeft / 60);
+  const seconds = secondsLeft % 60;
+  const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  const timeColor = secondsLeft <= 60 ? '#DC2626' : (secondsLeft <= 180 ? '#D97706' : '#10B981');
+
   function update(field, value) {
     setForm(prev => ({ ...prev, [field]: value }));
     setError(null);
   }
 
+  // Validación simple de email
+  function isValidEmail(email) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  }
+
   async function handleSubmit() {
     // Validación
+    if (expired) return setError('La reserva expiró. Cierra y vuelve a intentar.');
     if (isOutOfStock) return setError('Esta combinación ya no tiene stock');
     if (!form.customerName.trim()) return setError('Tu nombre es requerido');
     if (!form.customerPhone.trim()) return setError('Tu celular es requerido');
     if (form.customerPhone.replace(/\D/g, '').length < 7) return setError('Celular inválido');
+    if (!form.customerEmail.trim()) return setError('Tu correo electrónico es requerido');
+    if (!isValidEmail(form.customerEmail.trim())) return setError('Correo electrónico inválido');
     if (!form.customerAddress.trim()) return setError('La dirección es requerida');
     if (!form.customerCity.trim()) return setError('La ciudad es requerida');
 
@@ -356,6 +385,7 @@ function CheckoutModal({ product, size, color, onClose }) {
           qty: 1,
           customerName: form.customerName.trim(),
           customerPhone: form.customerPhone.trim(),
+          customerEmail: form.customerEmail.trim().toLowerCase(),
           customerDoc: form.customerDoc.trim() || null,
           customerAddress: form.customerAddress.trim(),
           customerCity: form.customerCity.trim(),
@@ -399,6 +429,16 @@ function CheckoutModal({ product, size, color, onClose }) {
           <button onClick={onClose} style={{ background: '#F0F2F5', color: '#6B7280', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
 
+        {/* Contador prominente */}
+        <div style={{ padding: '10px 20px', background: expired ? '#FEE2E2' : '#F0FDF4', borderBottom: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: 11, color: expired ? '#991B1B' : '#065F46', fontWeight: 600 }}>
+            {expired ? '⏱ Reserva expirada' : '⏱ Tu producto está apartado'}
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: expired ? '#991B1B' : timeColor, fontFamily: 'monospace' }}>
+            {expired ? '00:00' : timeStr}
+          </div>
+        </div>
+
         {/* Resumen del producto */}
         <div style={{ padding: '14px 20px', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
           <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 2 }}>{product.code}</div>
@@ -416,12 +456,13 @@ function CheckoutModal({ product, size, color, onClose }) {
 
         {/* Formulario */}
         <div style={{ padding: '16px 20px' }}>
-          <Field label="Nombre completo *" value={form.customerName} onChange={v => update('customerName', v)} disabled={loading} />
-          <Field label="Celular *" value={form.customerPhone} onChange={v => update('customerPhone', v)} type="tel" placeholder="3001234567" disabled={loading} />
-          <Field label="Cédula" value={form.customerDoc} onChange={v => update('customerDoc', v)} type="tel" placeholder="Opcional" disabled={loading} />
-          <Field label="Dirección de entrega *" value={form.customerAddress} onChange={v => update('customerAddress', v)} placeholder="Calle, número, barrio" disabled={loading} />
-          <Field label="Ciudad *" value={form.customerCity} onChange={v => update('customerCity', v)} disabled={loading} />
-          <Field label="Notas (opcional)" value={form.customerNotes} onChange={v => update('customerNotes', v)} placeholder="Algo más que debamos saber" disabled={loading} />
+          <Field label="Nombre completo *" value={form.customerName} onChange={v => update('customerName', v)} disabled={loading || expired} />
+          <Field label="Celular *" value={form.customerPhone} onChange={v => update('customerPhone', v)} type="tel" placeholder="3001234567" disabled={loading || expired} />
+          <Field label="Correo electrónico *" value={form.customerEmail} onChange={v => update('customerEmail', v)} type="email" placeholder="tucorreo@ejemplo.com" disabled={loading || expired} />
+          <Field label="Cédula" value={form.customerDoc} onChange={v => update('customerDoc', v)} type="tel" placeholder="Opcional" disabled={loading || expired} />
+          <Field label="Dirección de entrega *" value={form.customerAddress} onChange={v => update('customerAddress', v)} placeholder="Calle, número, barrio" disabled={loading || expired} />
+          <Field label="Ciudad *" value={form.customerCity} onChange={v => update('customerCity', v)} disabled={loading || expired} />
+          <Field label="Notas (opcional)" value={form.customerNotes} onChange={v => update('customerNotes', v)} placeholder="Algo más que debamos saber" disabled={loading || expired} />
 
           {error && (
             <div style={{ marginTop: 10, padding: '10px 12px', background: '#FEE2E2', color: '#991B1B', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>
@@ -429,19 +470,25 @@ function CheckoutModal({ product, size, color, onClose }) {
             </div>
           )}
 
-          <div style={{ padding: '10px 12px', background: '#EFF6FF', borderRadius: 8, fontSize: 11, color: '#1E40AF', marginTop: 12, lineHeight: 1.5 }}>
-            <strong>🔒 Pago seguro</strong><br />
-            Te llevaremos a Mercado Pago. Tu producto queda apartado 20 minutos mientras pagas.
-          </div>
+          {expired ? (
+            <div style={{ padding: '12px', background: '#FEF3C7', borderRadius: 8, fontSize: 12, color: '#92400E', marginTop: 12, lineHeight: 1.5, fontWeight: 600 }}>
+              Tu reserva expiró. El producto volvió a estar disponible para otros clientes. Cierra esta ventana e intenta de nuevo si todavía está disponible.
+            </div>
+          ) : (
+            <div style={{ padding: '10px 12px', background: '#EFF6FF', borderRadius: 8, fontSize: 11, color: '#1E40AF', marginTop: 12, lineHeight: 1.5 }}>
+              <strong>🔒 Pago seguro</strong><br />
+              Te llevaremos a Mercado Pago. Tienes 10 minutos para completar el pago.
+            </div>
+          )}
 
-          <button onClick={handleSubmit} disabled={loading} style={{
+          <button onClick={handleSubmit} disabled={loading || expired} style={{
             width: '100%', marginTop: 14, padding: '14px',
-            background: loading ? '#9CA3AF' : 'linear-gradient(135deg, #00B1EA 0%, #009EE3 100%)',
+            background: (loading || expired) ? '#9CA3AF' : 'linear-gradient(135deg, #00B1EA 0%, #009EE3 100%)',
             color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 800,
-            cursor: loading ? 'wait' : 'pointer', fontFamily: "'Montserrat', sans-serif",
-            boxShadow: loading ? 'none' : '0 4px 12px rgba(0,158,227,0.3)',
+            cursor: (loading || expired) ? 'not-allowed' : 'pointer', fontFamily: "'Montserrat', sans-serif",
+            boxShadow: (loading || expired) ? 'none' : '0 4px 12px rgba(0,158,227,0.3)',
           }}>
-            {loading ? 'Generando pago…' : `💳 Pagar ${cur(fp)}`}
+            {expired ? '⏱ Reserva expirada' : (loading ? 'Generando pago…' : `💳 Pagar ${cur(fp)}`)}
           </button>
 
           <button onClick={onClose} disabled={loading} style={{

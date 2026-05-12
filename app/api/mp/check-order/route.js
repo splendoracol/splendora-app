@@ -129,20 +129,23 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
   const orderTotal = Number(reservation.total) || 0;
   const costTotal = (Number(product.cost_total) || 0) * (reservation.qty || 1);
 
-  // 2. Generar order_number
+  // 2. Generar order_number — empezamos desde 1001 para no verse nuevos
   const { data: counter } = await supabaseAdmin
     .from('counters')
     .select('value')
     .eq('id', 'order_number')
     .single();
 
-  const nextOrderNumber = (counter?.value || 0) + 1;
+  // Si el counter está en 0 o por debajo de 1000, arrancamos en 1001
+  const currentValue = Number(counter?.value) || 0;
+  const nextOrderNumber = currentValue < 1000 ? 1001 : currentValue + 1;
 
   // 3. Crear pedido
   const orderPayload = {
     order_number: nextOrderNumber,
     customer_name: reservation.customer_name,
     customer_phone: reservation.customer_phone,
+    customer_email: reservation.customer_email,
     customer_doc: reservation.customer_doc,
     customer_address: reservation.customer_address,
     city: reservation.customer_city,
@@ -180,11 +183,10 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
     return null;
   }
 
-  // 4. Actualizar counter
+  // 4. Actualizar counter (upsert por si no existe)
   await supabaseAdmin
     .from('counters')
-    .update({ value: nextOrderNumber })
-    .eq('id', 'order_number');
+    .upsert({ id: 'order_number', value: nextOrderNumber }, { onConflict: 'id' });
 
   // 5. Descontar stock de la variante específica (si tiene variantes)
   const productHasVariants = !!(product.variants && Array.isArray(product.variants.items) && product.variants.items.length > 0);
