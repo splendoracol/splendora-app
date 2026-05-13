@@ -277,6 +277,7 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
       priceUnit: Number(reservation.price_unit) || 0,
       costUnit: Number(product.cost_total) || 0,
       subtotal: orderTotal,
+      photoUrl: product.photo_url || null,
     }],
     total: orderTotal,
     cost_total: costTotal,

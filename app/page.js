@@ -1356,6 +1356,40 @@ export default function HomePage() {
                             </div>
                           )}
 
+                          {/* Tarjeta de tracking — solo si pedido ya enviado con guía */}
+                          {o.tracking_number && (o.status === 'shipped' || o.status === 'delivered') && (
+                            <div style={{ background: '#1A1D23', color: '#FFF', padding: '12px 14px', borderRadius: 8, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ fontSize: 8, color: '#9CA3AF', fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 2 }}>
+                                  🚚 {o.tracking_carrier || 'Empresa'}
+                                </div>
+                                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {o.tracking_number}
+                                </div>
+                              </div>
+                              <a
+                                href={(() => {
+                                  const c = (o.tracking_carrier || '').toLowerCase();
+                                  const n = o.tracking_number;
+                                  if (c.includes('inter')) return `https://www.interrapidisimo.com/sigue-tu-envio/?guia=${n}`;
+                                  if (c.includes('servientrega')) return `https://www.servientrega.com/wps/portal/rastreo-envio?guia=${n}`;
+                                  if (c.includes('coordinadora')) return `https://coordinadora.com/rastreo/?guia=${n}`;
+                                  if (c.includes('tcc')) return `https://tcc.com.co/rastreo?guia=${n}`;
+                                  return `https://www.google.com/search?q=rastreo+${encodeURIComponent(o.tracking_carrier || '')}+${n}`;
+                                })()}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  padding: '6px 12px', background: '#FFF', color: '#1A1D23',
+                                  borderRadius: 6, fontSize: 10, fontWeight: 700,
+                                  textDecoration: 'none', whiteSpace: 'nowrap',
+                                }}>
+                                Rastrear
+                              </a>
+                            </div>
+                          )}
+
                           {/* Estado de entrega — solo si no está cancelado/reembolsado */}
                           {!isCancelled && !isRefunded && (
                             <>
