@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { MercadoPagoConfig, Payment, PaymentRefund } from 'mercadopago';
+import { sendConfirmationEmail } from '../../../../lib/emails';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -373,6 +374,22 @@ async function confirmReservationAndCreateOrder(reservation, paymentId, amountPa
     });
   } catch (err) {
     console.error('[Check-order] Error en upsert email_list:', err);
+  }
+
+  // Enviar email de confirmación de compra al cliente
+  try {
+    await sendConfirmationEmail({
+      orderNumber: nextOrderNumber,
+      customerName: reservation.customer_name,
+      customerEmail: reservation.customer_email,
+      items: orderPayload.items,
+      total: orderTotal,
+      address: reservation.customer_address,
+      city: reservation.customer_city,
+      phone: reservation.customer_phone,
+    });
+  } catch (err) {
+    console.error('[Check-order] Error enviando email confirmación:', err);
   }
 
   return nextOrderNumber;

@@ -378,6 +378,9 @@ export default function HomePage() {
     });
   }
 
+  // Modal para pedir número de guía cuando se marca pedido como "Enviado"
+  const [shippingModal, setShippingModal] = useState(null); // { order, oldStatus } | null
+
   useEffect(() => {
     try {
       const s = localStorage.getItem('dash_socias');
@@ -1361,7 +1364,15 @@ export default function HomePage() {
                                 {Object.entries(STATUS).filter(([k]) => k !== 'cancelled' && k !== 'refunded').map(([k, v]) => (
                                   <button
                                     key={k}
-                                    onClick={(e) => { e.stopPropagation(); updateOrderStatus(o.id, k, o.items, o.status); }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      // Si pasa a "Enviado" y tiene email, abrir modal para pedir guía
+                                      if (k === 'shipped' && o.customer_email && o.status !== 'shipped') {
+                                        setShippingModal({ order: o, oldStatus: o.status });
+                                      } else {
+                                        updateOrderStatus(o.id, k, o.items, o.status);
+                                      }
+                                    }}
                                     style={{
                                       padding: '5px 10px', fontSize: 10, fontWeight: 700,
                                       background: o.status === k ? v.color : '#FFFFFF',
@@ -2064,6 +2075,31 @@ export default function HomePage() {
           ))}
         </div>
       </div>
+
+      {/* Modal "Marcar como enviado" — pide número de guía + empresa, envía email */}
+      {shippingModal && (
+        <ShippingModal
+          order={shippingModal.order}
+          oldStatus={shippingModal.oldStatus}
+          onClose={() => setShippingModal(null)}
+          onConfirm={async ({ trackingNumber, carrier }) => {
+            const o = shippingModal.order;
+            // 1. Actualizar estado del pedido a "shipped"
+            await updateOrderStatus(o.id, 'shipped', o.items, o.status);
+            // 2. Llamar al endpoint que guarda guía y envía email
+            try {
+              await fetch('/api/email/send-shipped', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ orderId: o.id, trackingNumber, carrier }),
+              });
+            } catch (err) {
+              console.error('Error enviando email de envío:', err);
+            }
+            setShippingModal(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -3450,6 +3486,114 @@ function CustomersSection({ emailList, filter, setFilter, search, setSearch, cit
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// SHIPPING MODAL — pide número de guía y empresa al marcar enviado
+// ════════════════════════════════════════════════════════════
+function ShippingModal({ order, oldStatus, onClose, onConfirm }) {
+  const [trackingNumber, setTrackingNumber] = useState('');
+  const [carrier, setCarrier] = useState('Interrapidísimo');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit() {
+    if (!trackingNumber.trim()) {
+      alert('Ingresa el número de guía');
+      return;
+    }
+    setSubmitting(true);
+    await onConfirm({ trackingNumber: trackingNumber.trim(), carrier });
+    setSubmitting(false);
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, fontFamily: "'Montserrat', sans-serif" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 16, width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #E5E7EB' }}>
+          <div style={{ fontSize: 9, color: '#9CA3AF', fontWeight: 700, letterSpacing: 2, marginBottom: 4 }}>
+            PEDIDO #{order.order_number || order.id?.slice(0, 8)}
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#1A1D23' }}>Marcar como enviado</div>
+          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 6, lineHeight: 1.5 }}>
+            Ingresa el número de guía. Le enviaremos un email a <strong>{order.customer_name}</strong> con el rastreo del pedido.
+          </div>
+        </div>
+
+        <div style={{ padding: '20px 24px' }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+              Empresa de envío
+            </label>
+            <select
+              value={carrier}
+              onChange={e => setCarrier(e.target.value)}
+              disabled={submitting}
+              style={{
+                width: '100%', padding: '11px 12px', border: '1px solid #E5E7EB', borderRadius: 8,
+                fontSize: 13, background: '#FFF', fontFamily: "'Montserrat', sans-serif",
+                cursor: 'pointer',
+              }}>
+              <option value="Interrapidísimo">Interrapidísimo</option>
+              <option value="Servientrega">Servientrega</option>
+              <option value="Coordinadora">Coordinadora</option>
+              <option value="TCC">TCC</option>
+              <option value="Otra">Otra empresa</option>
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+              Número de guía
+            </label>
+            <input
+              type="text"
+              value={trackingNumber}
+              onChange={e => setTrackingNumber(e.target.value)}
+              placeholder="Ej. 240017889234"
+              disabled={submitting}
+              autoFocus
+              style={{
+                width: '100%', padding: '11px 12px', border: '1px solid #E5E7EB', borderRadius: 8,
+                fontSize: 13, fontFamily: "'Montserrat', sans-serif",
+              }}
+            />
+          </div>
+
+          {!order.customer_email && (
+            <div style={{ background: '#FEF3C7', color: '#92400E', padding: '10px 12px', borderRadius: 8, fontSize: 11, marginBottom: 16 }}>
+              ⚠ Este pedido no tiene email del cliente. Se marcará como enviado pero NO se enviará email.
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={onClose}
+              disabled={submitting}
+              style={{
+                flex: 1, padding: '12px', background: '#F0F2F5', color: '#6B7280',
+                border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                cursor: submitting ? 'not-allowed' : 'pointer',
+                fontFamily: "'Montserrat', sans-serif",
+              }}>
+              Cancelar
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !trackingNumber.trim()}
+              style={{
+                flex: 2, padding: '12px', background: '#1A1D23', color: '#FFF',
+                border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                cursor: (submitting || !trackingNumber.trim()) ? 'not-allowed' : 'pointer',
+                fontFamily: "'Montserrat', sans-serif",
+                opacity: (submitting || !trackingNumber.trim()) ? 0.6 : 1,
+              }}>
+              {submitting ? 'Enviando...' : 'Confirmar y notificar'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
