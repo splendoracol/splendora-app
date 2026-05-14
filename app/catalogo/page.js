@@ -476,7 +476,7 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
                 }}>
                 {isOutOfStock
                   ? (isReservedByOthers ? '⏱ Reservado temporalmente' : '⚠ Sin stock')
-                  : (selectedQty > 1 ? `💳 Pagar ${cur(fp * selectedQty)} (${selectedQty} unid.)` : '💳 Pagar con Mercado Pago')}
+                  : (selectedQty > 1 ? `💳 Pagar ${cur(fp * selectedQty)} (${selectedQty} unid.)` : '💳 Pagar en línea')}
               </button>
             )}
             <button onClick={() => onWhatsApp(p)} style={{ width: '100%', padding: '13px', background: '#25D366', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif" }}>💬 Preguntar por WhatsApp</button>
@@ -490,16 +490,18 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
   );
 }
 
-function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt, onClose }) {
+function CheckoutModal({ product, size, color, qty = 1, reservationId, reservationIds, cartItems, cartTotal, expiresAt, onClose }) {
+  // ── Detectar modo: carrito (varios productos) o singular ──
+  const isCart = Array.isArray(cartItems) && cartItems.length > 0;
+
   const [form, setForm] = useState({
     customerName: '', customerPhone: '', customerEmail: '', customerDoc: '',
     customerAddress: '', customerCity: '', customerNotes: '',
-    marketingOptin: true, // por defecto ✅ marcado (opt-out)
+    marketingOptin: true,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // ── Contador basado en expiresAt REAL de la reserva ──
   const [secondsLeft, setSecondsLeft] = useState(() => {
     if (!expiresAt) return 10 * 60;
     const diff = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000);
@@ -518,12 +520,22 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
   }, [secondsLeft, loading]);
 
   if (!product) return null;
-  const disc = product.discount > 0;
-  const fp = disc ? Math.round(product.price * (1 - product.discount / 100)) : product.price;
 
-  const useVariants = hasVariants(product);
-  const currentStock = useVariants ? getVariantStock(product, size, color) : (Number(product.stock) || 0);
-  const isOutOfStock = currentStock <= 0;
+  // ── Variables según modo ──
+  let displayTotal = 0;
+  let isOutOfStock = false;
+  if (isCart) {
+    displayTotal = cartTotal || 0;
+    // En modo carrito asumimos que ya validamos stock al reservar
+    isOutOfStock = false;
+  } else {
+    const disc = product.discount > 0;
+    const fp = disc ? Math.round(product.price * (1 - product.discount / 100)) : product.price;
+    displayTotal = fp * qty;
+    const useVariants = hasVariants(product);
+    const currentStock = useVariants ? getVariantStock(product, size, color) : (Number(product.stock) || 0);
+    isOutOfStock = currentStock <= 0;
+  }
 
   const minutes = Math.floor(secondsLeft / 60);
   const seconds = secondsLeft % 60;
@@ -539,18 +551,28 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
 
-  // Cuando el usuario cierra el modal sin completar el pago, cancelar la reserva
-  // para liberar el stock inmediatamente y no esperar a los 10 minutos.
   async function handleClose() {
-    if (reservationId && !loading) {
-      // Llamar a cancelar (no esperamos respuesta, es fire-and-forget)
+    // Cancelar reserva(s) al cerrar sin completar
+    if (!loading) {
       try {
-        fetch('/api/mp/cancel-reserve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reservationId }),
-          keepalive: true,
-        });
+        if (isCart && reservationIds && reservationIds.length > 0) {
+          // Cancelar cada reserva del carrito (fire-and-forget)
+          for (const id of reservationIds) {
+            fetch('/api/mp/cancel-reserve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reservationId: id }),
+              keepalive: true,
+            });
+          }
+        } else if (reservationId) {
+          fetch('/api/mp/cancel-reserve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reservationId }),
+            keepalive: true,
+          });
+        }
       } catch {}
     }
     onClose();
@@ -571,20 +593,27 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
     setError(null);
 
     try {
+      // ── Body según modo (singular o carrito) ──
+      const body = {
+        customerName: form.customerName.trim(),
+        customerPhone: form.customerPhone.trim(),
+        customerEmail: form.customerEmail.trim().toLowerCase(),
+        customerDoc: form.customerDoc.trim() || null,
+        customerAddress: form.customerAddress.trim(),
+        customerCity: form.customerCity.trim(),
+        customerNotes: form.customerNotes.trim() || null,
+        marketingOptin: form.marketingOptin,
+      };
+      if (isCart) {
+        body.reservationIds = reservationIds;
+      } else {
+        body.reservationId = reservationId;
+      }
+
       const res = await fetch('/api/mp/create-preference', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          reservationId: reservationId,
-          customerName: form.customerName.trim(),
-          customerPhone: form.customerPhone.trim(),
-          customerEmail: form.customerEmail.trim().toLowerCase(),
-          customerDoc: form.customerDoc.trim() || null,
-          customerAddress: form.customerAddress.trim(),
-          customerCity: form.customerCity.trim(),
-          customerNotes: form.customerNotes.trim() || null,
-          marketingOptin: form.marketingOptin,
-        }),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();
@@ -616,7 +645,7 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
       <div onClick={e => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 20, width: '100%', maxWidth: 440, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 2, background: '#FFF', padding: '16px 20px 10px', borderBottom: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <div style={{ fontSize: 9, color: '#009EE3', fontWeight: 800, letterSpacing: 1 }}>PAGAR CON MERCADO PAGO</div>
+            <div style={{ fontSize: 9, color: '#009EE3', fontWeight: 800, letterSpacing: 1 }}>PAGAR EN LÍNEA</div>
             <div style={{ fontSize: 14, fontWeight: 800, marginTop: 2 }}>Datos para envío</div>
           </div>
           <button onClick={handleClose} style={{ background: '#F0F2F5', color: '#6B7280', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
@@ -632,25 +661,58 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
           </div>
         </div>
 
-        {/* Resumen del producto */}
+        {/* Resumen del producto (o productos si es carrito) */}
         <div style={{ padding: '14px 20px', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
-          <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 2 }}>{product.code}</div>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{product.name}</div>
-          <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6 }}>
-            {size && <>Talla: <strong>{size}</strong></>}
-            {size && color && <> · </>}
-            {color && <>Color: <strong>{color}</strong></>}
-            {qty > 1 && <> · Cantidad: <strong>{qty}</strong></>}
-          </div>
-          {qty > 1 && (
-            <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6 }}>
-              {cur(fp)} × {qty} unidades
-            </div>
+          {isCart ? (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                🛒 {cartItems.length} producto{cartItems.length === 1 ? '' : 's'} en tu compra
+              </div>
+              <div style={{ maxHeight: 180, overflowY: 'auto', marginBottom: 8 }}>
+                {cartItems.map((item, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: i < cartItems.length - 1 ? '1px solid #E5E7EB' : 'none' }}>
+                    <div style={{ position: 'relative', width: 40, height: 40, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: '#E5E7EB' }}>
+                      {item.photo_url && <Image src={item.photo_url} alt="" fill sizes="40px" style={{ objectFit: 'cover' }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</div>
+                      <div style={{ fontSize: 9, color: '#6B7280' }}>
+                        {item._size ? `Talla ${item._size}` : ''}
+                        {item._size && item._color ? ' · ' : ''}
+                        {item._color || ''}
+                        {item._qty > 1 ? ` · x${item._qty}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{cur(item._total)}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 8, paddingTop: 8, borderTop: '2px solid #E5E7EB' }}>
+                <span style={{ fontSize: 11, color: '#6B7280' }}>Total a pagar</span>
+                <span style={{ fontSize: 22, fontWeight: 800, color: '#009EE3' }}>{cur(displayTotal)}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 2 }}>{product.code}</div>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{product.name}</div>
+              <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6 }}>
+                {size && <>Talla: <strong>{size}</strong></>}
+                {size && color && <> · </>}
+                {color && <>Color: <strong>{color}</strong></>}
+                {qty > 1 && <> · Cantidad: <strong>{qty}</strong></>}
+              </div>
+              {qty > 1 && (
+                <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6 }}>
+                  {cur(product.discount > 0 ? Math.round(product.price * (1 - product.discount / 100)) : product.price)} × {qty} unidades
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 8 }}>
+                <span style={{ fontSize: 11, color: '#6B7280' }}>Total a pagar</span>
+                <span style={{ fontSize: 22, fontWeight: 800, color: '#009EE3' }}>{cur(displayTotal)}</span>
+              </div>
+            </>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 8 }}>
-            <span style={{ fontSize: 11, color: '#6B7280' }}>Total a pagar</span>
-            <span style={{ fontSize: 22, fontWeight: 800, color: '#009EE3' }}>{cur(fp * qty)}</span>
-          </div>
         </div>
 
         {/* Formulario */}
@@ -695,7 +757,7 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
           ) : (
             <div style={{ padding: '10px 12px', background: '#EFF6FF', borderRadius: 8, fontSize: 11, color: '#1E40AF', marginTop: 12, lineHeight: 1.5 }}>
               <strong>🔒 Pago seguro</strong><br />
-              Te llevaremos a Mercado Pago. Tienes 10 minutos para completar el pago.
+              Te llevaremos a la página de pago. Tienes 10 minutos para completar.
             </div>
           )}
 
@@ -706,7 +768,7 @@ function CheckoutModal({ product, size, color, qty = 1, reservationId, expiresAt
             cursor: (loading || expired) ? 'not-allowed' : 'pointer', fontFamily: "'Montserrat', sans-serif",
             boxShadow: (loading || expired) ? 'none' : '0 4px 12px rgba(0,158,227,0.3)',
           }}>
-            {expired ? '⏱ Reserva expirada' : (loading ? 'Generando pago…' : `💳 Pagar ${cur(fp * qty)}`)}
+            {expired ? '⏱ Reserva expirada' : (loading ? 'Generando pago…' : `💳 Pagar ${cur(displayTotal)}`)}
           </button>
 
           <button onClick={onClose} disabled={loading} style={{
@@ -743,26 +805,39 @@ function Field({ label, value, onChange, type = 'text', placeholder = '', disabl
   );
 }
 
-function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors }) {
+function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors, qtys, onPayAll }) {
   if (cart.length === 0) return null;
+
+  // Calcular si TODOS los productos tienen precio (no oculto)
+  const allHavePrice = cart.every(p => !p.hide_price);
+  // Total del carrito (solo cuenta productos con precio visible)
+  const total = cart.reduce((acc, p) => {
+    if (p.hide_price) return acc;
+    const qty = qtys[p.id] || 1;
+    const fp = p.discount > 0 ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
+    return acc + (fp * qty);
+  }, 0);
+
   function sendAll() {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     let msg = `Hola! Me interesan estos productos de SPLENDORA.COL:\n\n`;
     cart.forEach((p, i) => {
       const sz = sizes[p.id] || (p.sizes && p.sizes.length > 0 ? p.sizes[0] : p.size);
       const cl = colors[p.id] || (p.colors && p.colors.length > 0 ? p.colors[0] : p.color);
+      const qt = qtys[p.id] || 1;
       const disc = p.discount > 0;
       const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
       const pr = p.hide_price ? 'Consultar' : cur(fp);
-      msg += `${i + 1}. *${p.name}*\n   Ref: ${p.code} · Talla: ${sz}${cl ? ` · Color: ${cl}` : ''}\n   Precio: ${pr}\n`;
+      msg += `${i + 1}. *${p.name}*\n   Ref: ${p.code} · Talla: ${sz}${cl ? ` · Color: ${cl}` : ''}${qt > 1 ? ` · Cantidad: ${qt}` : ''}\n   Precio: ${pr}\n`;
       msg += `   ${origin}/producto/${encodeURIComponent(p.code)}\n`;
       msg += '\n';
     });
     msg += `Total: ${cart.length} producto(s)\n\n¿Están disponibles? 🛍`;
     window.open(`https://wa.me/${wa}?text=${encodeURIComponent(msg)}`, '_blank');
   }
+
   return (
-    <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 900, background: '#FFF', borderRadius: '20px 20px 0 0', boxShadow: '0 -4px 20px rgba(0,0,0,0.1)', padding: '16px 20px max(16px, env(safe-area-inset-bottom))', maxHeight: '50vh', overflow: 'auto' }}>
+    <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 900, background: '#FFF', borderRadius: '20px 20px 0 0', boxShadow: '0 -4px 20px rgba(0,0,0,0.1)', padding: '16px 20px max(16px, env(safe-area-inset-bottom))', maxHeight: '70vh', overflow: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ fontWeight: 800, fontSize: 14 }}>🛒 Carrito ({cart.length})</div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#6B7280' }}>×</button>
@@ -770,6 +845,7 @@ function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors }) {
       {cart.map((p, i) => {
         const sz = sizes[p.id] || (p.sizes && p.sizes.length > 0 ? p.sizes[0] : p.size);
         const cl = colors[p.id] || (p.colors && p.colors.length > 0 ? p.colors[0] : p.color);
+        const qt = qtys[p.id] || 1;
         return (
           <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: i < cart.length - 1 ? '1px solid #E5E7EB' : 'none' }}>
             <div style={{ position: 'relative', width: 40, height: 40, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: '#E5E7EB' }}>
@@ -777,14 +853,51 @@ function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors }) {
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 12 }}>{p.name}</div>
-              <div style={{ fontSize: 9, color: '#6B7280' }}>{p.code} · {sz}{cl ? ` · ${cl}` : ''}</div>
+              <div style={{ fontSize: 9, color: '#6B7280' }}>{p.code} · {sz}{cl ? ` · ${cl}` : ''}{qt > 1 ? ` · x${qt}` : ''}</div>
             </div>
-            {!p.hide_price && <div style={{ fontWeight: 800, fontSize: 13, flexShrink: 0 }}>{cur(p.discount > 0 ? Math.round(p.price * (1 - p.discount / 100)) : p.price)}</div>}
+            {!p.hide_price && <div style={{ fontWeight: 800, fontSize: 13, flexShrink: 0 }}>{cur((p.discount > 0 ? Math.round(p.price * (1 - p.discount / 100)) : p.price) * qt)}</div>}
             <button onClick={() => onRemove(p.id)} style={{ background: 'none', border: 'none', color: '#C0504E', cursor: 'pointer', fontSize: 14 }}>✕</button>
           </div>
         );
       })}
-      <button onClick={sendAll} style={{ width: '100%', padding: '13px', background: '#25D366', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif", marginTop: 12 }}>
+
+      {/* Total si hay precio visible */}
+      {allHavePrice && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderTop: '2px solid #E5E7EB', marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: '#6B7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>Total</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#1A1D23' }}>{cur(total)}</div>
+        </div>
+      )}
+
+      {/* Botón Pagar en línea (solo si TODOS tienen precio) */}
+      {allHavePrice && (
+        <button
+          onClick={onPayAll}
+          style={{
+            width: '100%', padding: '14px',
+            background: 'linear-gradient(135deg, #00B1EA 0%, #009EE3 100%)',
+            color: '#fff', border: 'none', borderRadius: 12,
+            fontSize: 13, fontWeight: 800, cursor: 'pointer',
+            fontFamily: "'Montserrat', sans-serif",
+            boxShadow: '0 4px 12px rgba(0,158,227,0.3)',
+            marginTop: 8,
+          }}>
+          💳 Pagar todo en línea ({cur(total)})
+        </button>
+      )}
+
+      {/* Aviso si hay productos sin precio */}
+      {!allHavePrice && (
+        <div style={{
+          background: '#FEF3C7', borderRadius: 8,
+          padding: '10px 12px', marginTop: 12,
+          fontSize: 11, color: '#92400E', lineHeight: 1.5,
+        }}>
+          ⚠️ Hay productos con precio a consultar. Para pago en línea, deben tener precio visible.
+        </div>
+      )}
+
+      <button onClick={sendAll} style={{ width: '100%', padding: '13px', background: '#25D366', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif", marginTop: 8 }}>
         💬 Enviar todo por WhatsApp ({cart.length})
       </button>
     </div>
@@ -1002,6 +1115,69 @@ export default function CatalogoPage() {
       });
     } catch (err) {
       console.error(err);
+      alert('Error de conexión. Intenta de nuevo.');
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // PAGO MULTI-PRODUCTO desde el carrito
+  // Reserva TODOS los productos del carrito y abre el checkout.
+  // ════════════════════════════════════════════════════════════
+  async function handlePayCart() {
+    if (cart.length === 0) return;
+
+    // Validar que todos tengan precio
+    const conPrecioOculto = cart.filter(p => p.hide_price);
+    if (conPrecioOculto.length > 0) {
+      alert('Para pago en línea, todos los productos deben tener precio visible.');
+      return;
+    }
+
+    // Construir items para el backend
+    const items = cart.map(p => ({
+      productId: p.id,
+      size: sizes[p.id] || (p.sizes && p.sizes.length > 0 ? p.sizes[0] : p.size) || null,
+      color: colors[p.id] || (p.colors && p.colors.length > 0 ? p.colors[0] : p.color) || null,
+      qty: qtys[p.id] || 1,
+    }));
+
+    try {
+      const res = await fetch('/api/mp/reserve-multi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        // Error: mostrar nombre del producto que falló si está disponible
+        alert(data.error || 'No se pudo apartar los productos. Intenta de nuevo.');
+        await refreshReservations();
+        return;
+      }
+
+      // Éxito: cerrar carrito y abrir checkout con array de productos
+      setShowCart(false);
+      setCheckoutProduct({
+        _isCart: true,
+        _cartItems: cart.map((p, i) => {
+          const r = data.reservations[i];
+          return {
+            ...p,
+            _reservationId: r.reservationId,
+            _size: r.size,
+            _color: r.color,
+            _qty: r.qty,
+            _priceUnit: r.priceUnit,
+            _total: r.total,
+          };
+        }),
+        _reservationIds: data.reservations.map(r => r.reservationId),
+        _totalAmount: data.totalAmount,
+        _expiresAt: data.expiresAt,
+      });
+    } catch (err) {
+      console.error('Error pagando carrito:', err);
       alert('Error de conexión. Intenta de nuevo.');
     }
   }
@@ -1398,7 +1574,7 @@ export default function CatalogoPage() {
         />
       )}
 
-      {/* CHECKOUT MERCADO PAGO MODAL */}
+      {/* CHECKOUT PAGO EN LÍNEA MODAL */}
       {checkoutProduct && (
         <CheckoutModal
           product={checkoutProduct}
@@ -1406,9 +1582,16 @@ export default function CatalogoPage() {
           color={colors[checkoutProduct.id] || (checkoutProduct.colors && checkoutProduct.colors.length > 0 ? checkoutProduct.colors[0] : checkoutProduct.color)}
           qty={qtys[checkoutProduct.id] || 1}
           reservationId={checkoutProduct._reservationId}
+          reservationIds={checkoutProduct._reservationIds}
+          cartItems={checkoutProduct._cartItems}
+          cartTotal={checkoutProduct._totalAmount}
           expiresAt={checkoutProduct._expiresAt}
           onClose={() => {
             setCheckoutProduct(null);
+            // Si era carrito, vaciarlo (los items quedan reservados pero ya no se pueden volver a abrir)
+            if (checkoutProduct._isCart) {
+              setCart([]);
+            }
             // Refrescar reservas para que otros usuarios vean stock liberado
             refreshReservations();
           }}
@@ -1417,7 +1600,7 @@ export default function CatalogoPage() {
 
       {/* CART */}
       {showCart && cart.length > 0 && (
-        <CartDrawer cart={cart} onClose={() => setShowCart(false)} onRemove={id => setCart(prev => prev.filter(x => x.id !== id))} wa={wa} sizes={sizes} colors={colors} />
+        <CartDrawer cart={cart} onClose={() => setShowCart(false)} onRemove={id => setCart(prev => prev.filter(x => x.id !== id))} wa={wa} sizes={sizes} colors={colors} qtys={qtys} onPayAll={handlePayCart} />
       )}
 
       {/* FOOTER */}
