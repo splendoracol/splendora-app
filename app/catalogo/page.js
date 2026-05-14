@@ -169,11 +169,13 @@ function PhotoNav({ photos, big }) {
         />
         {photos.length > 1 && (
           <>
-            <button onClick={e => { e.stopPropagation(); setIdx(idx === 0 ? photos.length - 1 : idx - 1); }}
-              style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.92)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: big ? 36 : 24, height: big ? 36 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontWeight: 600 }}>‹</button>
-            <button onClick={e => { e.stopPropagation(); setIdx(idx === photos.length - 1 ? 0 : idx + 1); }}
-              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.92)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: big ? 36 : 24, height: big ? 36 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontWeight: 600 }}>›</button>
-            <div style={{ position: 'absolute', bottom: 10, right: 10, background: 'rgba(26, 29, 35, 0.75)', color: '#FFF', padding: big ? '4px 10px' : '2px 7px', borderRadius: 100, fontSize: big ? 10 : 9, fontWeight: 700, letterSpacing: 0.5, zIndex: 2 }}>
+            <button type="button"
+              onClick={e => { e.stopPropagation(); e.preventDefault(); setIdx(idx === 0 ? photos.length - 1 : idx - 1); }}
+              style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.95)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: big ? 36 : 24, height: big ? 36 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontWeight: 600, padding: 0, lineHeight: 1 }}>‹</button>
+            <button type="button"
+              onClick={e => { e.stopPropagation(); e.preventDefault(); setIdx(idx === photos.length - 1 ? 0 : idx + 1); }}
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.95)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: big ? 36 : 24, height: big ? 36 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontWeight: 600, padding: 0, lineHeight: 1 }}>›</button>
+            <div style={{ position: 'absolute', bottom: 10, right: 10, background: 'rgba(26, 29, 35, 0.75)', color: '#FFF', padding: big ? '4px 10px' : '2px 7px', borderRadius: 100, fontSize: big ? 10 : 9, fontWeight: 700, letterSpacing: 0.5, zIndex: 15, pointerEvents: 'none' }}>
               {idx + 1} / {photos.length}
             </div>
           </>
@@ -806,6 +808,20 @@ export default function CatalogoPage() {
   const [showCart, setShowCart] = useState(false);
   const [categories, setCategories] = useState(CATEGORIES_FALLBACK);
   const [checkoutProduct, setCheckoutProduct] = useState(null);
+  // Preferencia de columnas en móvil (2, 3, o 4). Se guarda en localStorage.
+  const [mobileColumns, setMobileColumns] = useState(2);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('splendora-mobile-columns');
+      if (saved && [2, 3, 4].includes(Number(saved))) {
+        setMobileColumns(Number(saved));
+      }
+    } catch {}
+  }, []);
+  function changeMobileColumns(n) {
+    setMobileColumns(n);
+    try { localStorage.setItem('splendora-mobile-columns', String(n)); } catch {}
+  }
 
   useEffect(() => {
     (async () => {
@@ -1021,6 +1037,28 @@ export default function CatalogoPage() {
             transform: translateY(0);
           }
         }
+        /* En móvil: aplicar columnas según preferencia del usuario */
+        @media (max-width: 767px) {
+          .splendora-columns-selector {
+            display: flex !important;
+          }
+          .splendora-grid-cols-2 {
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 12px !important;
+          }
+          .splendora-grid-cols-3 {
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 8px !important;
+          }
+          .splendora-grid-cols-4 {
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 6px !important;
+          }
+          /* Ocultar el botón "Ver detalles" en móvil (tap directo abre modal) */
+          .splendora-product-card .splendora-card-quickbtn {
+            display: none;
+          }
+        }
       `}</style>
 
       {/* HEADER */}
@@ -1060,7 +1098,42 @@ export default function CatalogoPage() {
             <div style={{ color: '#9CA3AF' }}>No hay productos disponibles</div>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))', gap: 16 }}>
+          <>
+            {/* Selector de columnas (solo móvil) */}
+            <div className="splendora-columns-selector" style={{
+              display: 'none',
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              gap: 4,
+              marginBottom: 12,
+            }}>
+              <span style={{ fontSize: 9, color: '#9CA3AF', fontWeight: 600, letterSpacing: 0.5, marginRight: 4, textTransform: 'uppercase' }}>Ver</span>
+              {[2, 3, 4].map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => changeMobileColumns(n)}
+                  style={{
+                    width: 28, height: 28, borderRadius: 6,
+                    border: 'none',
+                    background: mobileColumns === n ? '#1A1D23' : '#FFFFFF',
+                    color: mobileColumns === n ? '#FFF' : '#6B7280',
+                    cursor: 'pointer',
+                    fontSize: 10, fontWeight: 700,
+                    boxShadow: mobileColumns === n ? 'none' : '0 1px 3px rgba(0,0,0,0.08)',
+                    fontFamily: "'Montserrat', sans-serif",
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>{n}</button>
+              ))}
+            </div>
+
+            <div
+              className={`splendora-products-grid splendora-grid-cols-${mobileColumns}`}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))',
+                gap: 16,
+              }}>
             {filtered.map(p => {
               const disc = p.discount > 0;
               const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
@@ -1188,6 +1261,7 @@ export default function CatalogoPage() {
               );
             })}
           </div>
+          </>
         )}
       </div>
 
