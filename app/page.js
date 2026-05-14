@@ -368,6 +368,10 @@ export default function HomePage() {
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerCityFilter, setCustomerCityFilter] = useState('');
 
+  // Pedidos NUEVOS (llegaron sin que admin estuviera mirando) — Set de IDs
+  // Se borran del set al expandirlos.
+  const [unseenOrders, setUnseenOrders] = useState(new Set());
+
   // Pedidos expandidos en la vista (estilo Shopify) — set de IDs
   const [expandedOrders, setExpandedOrders] = useState(new Set());
   function toggleOrderExpanded(id) {
@@ -376,10 +380,52 @@ export default function HomePage() {
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+    // Al expandir un pedido, marcarlo como visto (quita el verde)
+    setUnseenOrders(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }
 
   // Modal para pedir número de guía cuando se marca pedido como "Enviado"
   const [shippingModal, setShippingModal] = useState(null); // { order, oldStatus } | null
+
+  // Toasts de notificación (estilo Rappi)
+  // Cada toast: { id, orderNumber, customerName, total, time }
+  const [toasts, setToasts] = useState([]);
+  function dismissToast(id) {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }
+
+  // Sonido de notificación (WebAudio API, no requiere archivo externo)
+  function playNotificationSound() {
+    try {
+      if (typeof window === 'undefined') return;
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      // Beep doble sutil tipo "ding ding"
+      const beep = (freq, start, duration) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = freq;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0, ctx.currentTime + start);
+        gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + duration + 0.05);
+      };
+      beep(880, 0, 0.15);
+      beep(1175, 0.12, 0.18);
+    } catch (err) {
+      console.log('No se pudo reproducir sonido:', err);
+    }
+  }
 
   useEffect(() => {
     try {
@@ -426,6 +472,57 @@ export default function HomePage() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  // ═══════════════ REALTIME — escuchar pedidos nuevos ═══════════════
+  // Cuando llega un INSERT en la tabla orders mientras el admin está abierto,
+  // mostramos toast + sonido + marcamos como "no visto".
+  useEffect(() => {
+    if (!session) return;
+
+    const channel = supabase
+      .channel('orders-realtime')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'orders' },
+        (payload) => {
+          const newOrder = payload.new;
+          if (!newOrder) return;
+
+          // Agregar a la lista de orders (al principio porque viene ordenado desc)
+          setOrders(prev => {
+            // Evitar duplicados si ya está
+            if (prev.some(o => o.id === newOrder.id)) return prev;
+            return [newOrder, ...prev];
+          });
+
+          // Marcar como no visto (queda verde claro hasta que se expanda)
+          setUnseenOrders(prev => {
+            const next = new Set(prev);
+            next.add(newOrder.id);
+            return next;
+          });
+
+          // Toast notificación + sonido
+          const toastId = `toast-${newOrder.id}-${Date.now()}`;
+          setToasts(prev => [
+            {
+              id: toastId,
+              orderId: newOrder.id,
+              orderNumber: newOrder.order_number,
+              customerName: newOrder.customer_name,
+              total: newOrder.total,
+              time: new Date(),
+            },
+            ...prev,
+          ].slice(0, 3)); // máx 3 toasts visibles
+          playNotificationSound();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session]);
 
   async function loadAll() {
     const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }, { data: cats }, { data: po }, { data: customers }] = await Promise.all([
@@ -1204,6 +1301,7 @@ export default function HomePage() {
                   const psCfg = PAYMENT_STATUS[ps];
                   const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0));
                   const isExpanded = expandedOrders.has(o.id);
+                  const isUnseen = unseenOrders.has(o.id);
                   const isCancelled = o.status === 'cancelled';
                   const isRefunded = o.status === 'refunded' || ps === 'refunded';
 
@@ -1241,9 +1339,14 @@ export default function HomePage() {
                           padding: '12px 14px',
                           cursor: 'pointer',
                           borderRadius: 10,
-                          background: isExpanded ? '#F9FAFB' : 'transparent',
+                          background: isUnseen
+                            ? '#D1FAE5'  // verde claro: pedido nuevo no visto
+                            : isExpanded
+                              ? '#F9FAFB'
+                              : 'transparent',
                           opacity: (isCancelled || isRefunded) ? 0.65 : 1,
                           transition: 'background 0.15s',
+                          position: 'relative',
                         }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           {/* Foto */}
@@ -1262,6 +1365,14 @@ export default function HomePage() {
                             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 1 }}>
                               {o.order_number && (
                                 <span style={{ color: '#4A6FA5', fontWeight: 800, fontSize: 11 }}>#{o.order_number}</span>
+                              )}
+                              {isUnseen && (
+                                <span style={{
+                                  background: '#10B981', color: '#FFF',
+                                  fontSize: 8, fontWeight: 800, letterSpacing: 0.5,
+                                  padding: '1px 5px', borderRadius: 3,
+                                  textTransform: 'uppercase',
+                                }}>NUEVO</span>
                               )}
                               <span style={{
                                 fontWeight: 700, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -1370,22 +1481,27 @@ export default function HomePage() {
                               <a
                                 href={(() => {
                                   const c = (o.tracking_carrier || '').toLowerCase();
-                                  const n = o.tracking_number;
-                                  if (c.includes('inter')) return `https://www.interrapidisimo.com/sigue-tu-envio/?guia=${n}`;
-                                  if (c.includes('servientrega')) return `https://www.servientrega.com/wps/portal/rastreo-envio?guia=${n}`;
-                                  if (c.includes('coordinadora')) return `https://coordinadora.com/rastreo/?guia=${n}`;
-                                  if (c.includes('tcc')) return `https://tcc.com.co/rastreo?guia=${n}`;
-                                  return `https://www.google.com/search?q=rastreo+${encodeURIComponent(o.tracking_carrier || '')}+${n}`;
+                                  if (c.includes('inter')) return 'https://siguetuenvio.interrapidisimo.com/';
+                                  if (c.includes('servientrega')) return 'https://www.servientrega.com/wps/portal/origen-de-carga/rastreo';
+                                  if (c.includes('coordinadora')) return 'https://coordinadora.com/rastreo/';
+                                  if (c.includes('tcc')) return 'https://tcc.com.co/rastreo';
+                                  return `https://www.google.com/search?q=rastreo+${encodeURIComponent(o.tracking_carrier || '')}+${o.tracking_number}`;
                                 })()}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Copiar número de guía al portapapeles para pegar fácil
+                                  try {
+                                    navigator.clipboard?.writeText(o.tracking_number);
+                                  } catch {}
+                                }}
                                 style={{
                                   padding: '6px 12px', background: '#FFF', color: '#1A1D23',
                                   borderRadius: 6, fontSize: 10, fontWeight: 700,
                                   textDecoration: 'none', whiteSpace: 'nowrap',
                                 }}>
-                                Rastrear
+                                Copiar y rastrear
                               </a>
                             </div>
                           )}
@@ -2134,6 +2250,23 @@ export default function HomePage() {
           }}
         />
       )}
+
+      {/* Toasts de notificación de pedidos nuevos */}
+      <ToastsContainer toasts={toasts} onDismiss={dismissToast} onTap={(orderId) => {
+        // Al tocar el toast, expandir el pedido y quitar verde
+        setExpandedOrders(prev => {
+          const next = new Set(prev);
+          next.add(orderId);
+          return next;
+        });
+        setUnseenOrders(prev => {
+          const next = new Set(prev);
+          next.delete(orderId);
+          return next;
+        });
+        // Cambiar a tab pedidos si no está ya
+        setTab('orders');
+      }} />
     </div>
   );
 }
@@ -3628,6 +3761,67 @@ function ShippingModal({ order, oldStatus, onClose, onConfirm }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// TOASTS — notificaciones flotantes de pedidos nuevos (estilo Rappi)
+// ════════════════════════════════════════════════════════════
+function ToastsContainer({ toasts, onDismiss, onTap }) {
+  if (!toasts || toasts.length === 0) return null;
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 80, right: 16, zIndex: 1300,
+      display: 'flex', flexDirection: 'column', gap: 8,
+      pointerEvents: 'none',
+      maxWidth: 340,
+    }}>
+      {toasts.map(t => (
+        <div key={t.id}
+          onClick={() => onTap(t.orderId)}
+          style={{
+            background: '#1A1D23', color: '#FFF',
+            padding: '12px 14px', borderRadius: 12,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+            display: 'flex', alignItems: 'center', gap: 10,
+            cursor: 'pointer', pointerEvents: 'auto',
+            animation: 'splendora-toast-in 0.3s ease-out',
+            fontFamily: "'Montserrat', sans-serif",
+          }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: '50%',
+            background: '#10B981', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 18,
+          }}>🛍</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#10B981', letterSpacing: 1 }}>
+              NUEVO PEDIDO {t.orderNumber ? `#${t.orderNumber}` : ''}
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {t.customerName || 'Cliente'}
+            </div>
+            <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+              ${Math.round(Number(t.total) || 0).toLocaleString('es-CO')} · {t.time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDismiss(t.id); }}
+            style={{
+              background: 'transparent', border: 'none', color: '#9CA3AF',
+              fontSize: 16, cursor: 'pointer', padding: 4,
+              flexShrink: 0,
+            }}>✕</button>
+        </div>
+      ))}
+      <style>{`
+        @keyframes splendora-toast-in {
+          from { opacity: 0; transform: translateX(40px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+      `}</style>
     </div>
   );
 }
