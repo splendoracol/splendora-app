@@ -143,26 +143,26 @@ function buildExcel(products, orders, expenses, config, month, year) {
   const pc = Math.max(0, rv - cashReceived);
   const ex = fe.reduce((a, x) => a + (x.amount || 0), 0);
   const nt = rv - cs - ex;
-  // Reserva SPLENDORA = Σ((bolsa + envío) × qty vendida) por cada item de cada pedido no cancelado
-  const splendoraReserve = nonCanc.reduce((acc, o) => {
-    return acc + (o.items || []).reduce((a, it) => {
-      const prod = products.find(p => p.id === it.productId);
-      if (!prod) return a;
-      return a + ((prod.cost_bag || 0) + (prod.cost_shipping || 0)) * (it.qty || 0);
-    }, 0);
-  }, 0);
-  // Distribución: primero se aparta reserva, luego 10/45/45, gastos salen del 10%
+  // Distribución según modelo SPLENDORA documento oficial:
+  // 20% Ads + 10% Marca + 35% socia 1 + 35% socia 2
+  // Los gastos se descuentan: primero del 10% Marca, luego del 20% Ads, luego de socias 50/50
   const gross = rv - cs;
-  const distributable = Math.max(0, gross - splendoraReserve);
-  const bizBase = distributable * 0.10;
-  const socBase = distributable * 0.45;
-  let biz, s1, s2;
-  if (ex <= bizBase) { biz = bizBase - ex; s1 = socBase; s2 = socBase; }
-  else { const d = (ex - bizBase) / 2; biz = 0; s1 = socBase - d; s2 = socBase - d; }
-  const bizTotal = splendoraReserve + biz;
+  const adsBase = Math.max(0, gross * 0.20);
+  const brandBase = Math.max(0, gross * 0.10);
+  const socBase = Math.max(0, gross * 0.35);
+  let ads, brand, s1, s2;
+  let remEx = ex;
+  if (remEx <= brandBase) { brand = brandBase - remEx; remEx = 0; }
+  else { brand = 0; remEx -= brandBase; }
+  if (remEx <= adsBase) { ads = adsBase - remEx; remEx = 0; }
+  else { ads = 0; remEx -= adsBase; }
+  const sociaDeficit = remEx / 2;
+  s1 = socBase - sociaDeficit;
+  s2 = socBase - sociaDeficit;
+  const bizTotal = ads + brand;
   const mk = (nm, h, rows) => `<Worksheet ss:Name="${nm}"><Table><Row>${h.map(x => `<Cell ss:StyleID="h"><Data ss:Type="String">${x}</Data></Cell>`).join('')}</Row>${rows}</Table></Worksheet>`;
   const period = month !== null ? `${MONTHS[month]} ${year}` : 'Todo';
-  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos (ventas)')}${n(rv)}</Row><Row>${s('Cobrado')}${n(cashReceived)}</Row><Row>${s('Por cobrar')}${n(pc)}</Row><Row>${s('Costos (productos vendidos)')}${n(cs)}</Row><Row>${s('Reserva SPLENDORA (bolsa+envío)')}${n(splendoraReserve)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('SPLENDORA total (reserva + 10%)')}${n(bizTotal)}</Row><Row>${s(config.partner1 + ' (45%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (45%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo u.', 'Precio u.', 'Stock', 'Inversión (costo×stock)', 'Valor venta (precio×stock)', 'Ganancia proy. (×stock)', 'Descuento %'], products.map(p => { const inv = (p.cost_total || 0) * (p.stock || 0); const val = (p.price || 0) * (p.stock || 0); const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0); return `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(inv)}${n(val)}${n(gp)}${n(p.discount)}</Row>`; }).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Productos', 'Total', 'Costo', 'Estado entrega', 'Estado pago', 'Abonado', 'Por cobrar', 'Notas pago'], fo.map(o => { const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0)); const ps = o.payment_status || 'pending'; return `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.city || '')}${s(o.channel)}${s((o.items || []).map(i => `${i.name} x${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}${s(PAYMENT_STATUS[ps]?.label || ps)}${n(o.amount_paid)}${n(ps === 'paid' ? 0 : due)}${s(o.payment_notes || '')}</Row>`; }).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
+  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="h"><Interior ss:Color="#2D3748" ss:Pattern="Solid"/><Font ss:Color="#FFFFFF" ss:Bold="1"/></Style></Styles><Worksheet ss:Name="Resumen"><Table><Row><Cell ss:StyleID="h"><Data ss:Type="String">Concepto</Data></Cell><Cell ss:StyleID="h"><Data ss:Type="String">Valor</Data></Cell></Row><Row>${s('Periodo')}${s(period)}</Row><Row>${s('Ingresos (ventas)')}${n(rv)}</Row><Row>${s('Cobrado')}${n(cashReceived)}</Row><Row>${s('Por cobrar')}${n(pc)}</Row><Row>${s('Costos (productos vendidos)')}${n(cs)}</Row><Row>${s('Gastos')}${n(ex)}</Row><Row>${s('Ganancia neta')}${n(nt)}</Row><Row>${s('Reserva Ads (20%)')}${n(ads)}</Row><Row>${s('Reserva Marca (10%)')}${n(brand)}</Row><Row>${s('SPLENDORA total (Ads + Marca)')}${n(bizTotal)}</Row><Row>${s(config.partner1 + ' (35%)')}${n(s1)}</Row><Row>${s(config.partner2 + ' (35%)')}${n(s2)}</Row></Table></Worksheet>${mk('Inventario', ['Código', 'Nombre', 'Categoría', 'Tallas', 'Color', 'Costo u.', 'Precio u.', 'Stock', 'Inversión (costo×stock)', 'Valor venta (precio×stock)', 'Ganancia proy. (×stock)', 'Descuento %'], products.map(p => { const inv = (p.cost_total || 0) * (p.stock || 0); const val = (p.price || 0) * (p.stock || 0); const gp = ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0); return `<Row>${s(p.code)}${s(p.name)}${s((p.categories || [p.category]).join(', '))}${s((p.sizes || []).join(', ') || p.size)}${s((p.colors || [p.color]).filter(Boolean).join(', '))}${n(p.cost_total)}${n(p.price)}${n(p.stock)}${n(inv)}${n(val)}${n(gp)}${n(p.discount)}</Row>`; }).join(''))}${mk('Pedidos', ['Fecha', 'Cliente', 'Ciudad', 'Canal', 'Productos', 'Total', 'Costo', 'Estado entrega', 'Estado pago', 'Abonado', 'Por cobrar', 'Notas pago'], fo.map(o => { const due = Math.max(0, (o.total || 0) - (o.amount_paid || 0)); const ps = o.payment_status || 'pending'; return `<Row>${s(new Date(o.created_at).toLocaleDateString('es-CO'))}${s(o.customer_name)}${s(o.city || '')}${s(o.channel)}${s((o.items || []).map(i => `${i.name} x${i.qty}${i.size ? ` (T:${i.size})` : ''}${i.color ? ` (${i.color})` : ''}`).join(', '))}${n(o.total)}${n(o.cost_total)}${s(STATUS[o.status]?.label || o.status)}${s(PAYMENT_STATUS[ps]?.label || ps)}${n(o.amount_paid)}${n(ps === 'paid' ? 0 : due)}${s(o.payment_notes || '')}</Row>`; }).join(''))}${mk('Gastos', ['Fecha', 'Descripción', 'Monto', 'Pagado por'], fe.map(x => `<Row>${s(new Date(x.created_at).toLocaleDateString('es-CO'))}${s(x.description)}${n(x.amount)}${s(x.paid_by)}</Row>`).join(''))}</Workbook>`;
 }
 
 function dlExcel(p, o, e, c, month, year) {
@@ -773,7 +773,7 @@ export default function HomePage() {
     // Ingresos brutos = total facturado incluyendo envío cobrado (para reporte)
     const rv = nonCanc.reduce((s, o) => s + (o.total || 0), 0);
     // Envío cobrado a clientas: es pass-through (lo reciben y lo pagan al mensajero).
-    // NO es ganancia del negocio, no entra a distribución 10/45/45.
+    // NO es ganancia del negocio, no entra a distribución 20/10/35/35.
     const shippingIncome = nonCanc.reduce((s, o) => s + (o.shipping_charge || 0), 0);
     // Ingresos de productos = ventas reales sin envío
     const productRevenue = rv - shippingIncome;
@@ -897,7 +897,6 @@ export default function HomePage() {
       (o.items || []).forEach((it, idx) => {
         const prod = products.find(p => p.id === it.productId);
         const costPerUnit = prod ? (prod.cost_total || 0) : 0;
-        const bagShipPerUnit = prod ? ((prod.cost_bag || 0) + (prod.cost_shipping || 0)) : 0;
         const priceUnit = it.priceUnit || 0;
         const qty = it.qty || 0;
         const subtotal = priceUnit * qty;
@@ -913,14 +912,15 @@ export default function HomePage() {
           paidOfItem = Math.min(subtotal, Math.round(paymentToProducts * proportion));
         }
         const dueOfItem = Math.max(0, subtotal - paidOfItem);
-        // Ganancia del item = (precio − costo) × qty. De eso, 10% SPLENDORA + 45% cada socia. Más reserva bolsa+envío para SPLENDORA.
-        // El envío cobrado a clienta NO entra a comisiones.
-        const itemGross = (priceUnit - costPerUnit) * qty;
-        const reserve = bagShipPerUnit * qty;
-        const distributable = Math.max(0, itemGross - reserve);
-        const commissionS1 = Math.round(distributable * 0.45);
-        const commissionS2 = Math.round(distributable * 0.45);
-        const splendoraShare = Math.round(distributable * 0.10) + reserve;
+        // ── DISTRIBUCIÓN MODELO SPLENDORA (documento oficial) ──
+        // Ganancia del item = (precio − costo) × qty
+        // De esa ganancia: 20% Ads + 10% Marca + 35% socia 1 + 35% socia 2
+        // El envío cobrado a clienta NO entra a comisiones (pass-through al mensajero).
+        const itemGross = Math.max(0, (priceUnit - costPerUnit) * qty);
+        const commissionS1 = Math.round(itemGross * 0.35);
+        const commissionS2 = Math.round(itemGross * 0.35);
+        const splendoraShare = Math.round(itemGross * 0.30); // 20% Ads + 10% Marca combinados
+        const reserve = 0; // ya NO se usa (compat para no romper UI vieja)
         const paidS1 = !!payouts[`${o.id}_${idx}_s1`];
         const paidS2 = !!payouts[`${o.id}_${idx}_s2`];
         const paidSplendora = !!payouts[`${o.id}_${idx}_sp`];
@@ -1114,7 +1114,7 @@ export default function HomePage() {
       [`Comisión total ${config.partner2}`, ordersTableTotals.s2Total],
       [`Por pagar a ${config.partner2}`, ordersTableTotals.s2ToPay],
       ['', ''],
-      ['SPLENDORA (reserva + 10%)', ordersTableTotals.splendoraTotal],
+      ['SPLENDORA (Ads 20% + Marca 10%)', ordersTableTotals.splendoraTotal],
       ['Por recibir SPLENDORA', ordersTableTotals.splendoraToReceive],
       ['Caja inversión (reposición)', ordersTableTotals.inversionTotal],
       ['Por recuperar en caja inversión', ordersTableTotals.inversionToRecover],
@@ -1182,7 +1182,7 @@ export default function HomePage() {
               ))}
             </div>
 
-            {/* Division 10/45/45 */}
+            {/* Division 20% Ads / 10% Marca / 35% / 35% */}
             <div className="neu-card" style={{ marginTop: 14 }}>
               <div onClick={() => toggleDash(setDashSocias, dashSocias, 'dash_socias')}
                 style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: dashSocias ? 12 : 0, userSelect: 'none' }}>
@@ -3584,7 +3584,11 @@ function CfgForm({ config, onSave }) {
       <Fld label="Socia 1"><input className="neu-input" value={c.partner1} onChange={e => setC({ ...c, partner1: e.target.value })} /></Fld>
       <Fld label="Socia 2"><input className="neu-input" value={c.partner2} onChange={e => setC({ ...c, partner2: e.target.value })} /></Fld>
       <div className="neu-card neu-pressed" style={{ padding: 12, marginBottom: 16, textAlign: 'center' }}>
-        <div style={{ fontSize: 12, fontWeight: 700 }}>División fija: 10% SPLENDORA · 45% {c.partner1} · 45% {c.partner2}</div>
+        <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>División fija (modelo oficial)</div>
+        <div style={{ fontSize: 10, color: '#6B7280', lineHeight: 1.6 }}>
+          📢 20% Ads · 🏷 10% Marca<br/>
+          {c.partner1} (35%) · {c.partner2} (35%)
+        </div>
       </div>
       <button className="neu-btn neu-btn-accent" style={{ width: '100%' }} onClick={() => onSave(c)}>Guardar</button>
     </div>
