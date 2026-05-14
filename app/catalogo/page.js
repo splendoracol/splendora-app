@@ -805,7 +805,7 @@ function Field({ label, value, onChange, type = 'text', placeholder = '', disabl
   );
 }
 
-function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors, qtys, onPayAll }) {
+function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors, qtys, onPayAll, onClear }) {
   if (cart.length === 0) return null;
 
   // Calcular si TODOS los productos tienen precio (no oculto)
@@ -921,6 +921,28 @@ function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors, qtys, onPayAll
       <button onClick={sendAll} style={{ width: '100%', padding: '13px', background: '#25D366', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif", marginTop: 8 }}>
         💬 Enviar todo por WhatsApp ({cart.length})
       </button>
+
+      {/* Botón Vaciar carrito — sutil al final */}
+      {onClear && (
+        <button
+          onClick={onClear}
+          style={{
+            width: '100%',
+            padding: '10px',
+            background: 'transparent',
+            color: '#9CA3AF',
+            border: 'none',
+            fontSize: 11,
+            fontWeight: 500,
+            cursor: 'pointer',
+            fontFamily: "'Montserrat', sans-serif",
+            marginTop: 4,
+            textDecoration: 'underline',
+            letterSpacing: 0.3,
+          }}>
+          🗑 Vaciar carrito
+        </button>
+      )}
     </div>
   );
 }
@@ -947,6 +969,90 @@ export default function CatalogoPage() {
     const t = setTimeout(() => setCartToast(null), 2500);
     return () => clearTimeout(t);
   }, [cartToast]);
+
+  // ════════════════════════════════════════════════════════════
+  // CARRITO PERSISTENTE — guarda en localStorage por 24 horas.
+  // Si la clienta refresca o vuelve dentro de 24h, mantiene su carrito.
+  // ════════════════════════════════════════════════════════════
+  const CART_STORAGE_KEY = 'splendora-cart-v1';
+  const CART_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
+  const [cartLoaded, setCartLoaded] = useState(false); // evita sobreescribir storage antes de cargar
+
+  // Cargar carrito guardado al iniciar (depende de que products esté listo)
+  useEffect(() => {
+    if (loading || cartLoaded || products.length === 0) return;
+    try {
+      const raw = localStorage.getItem(CART_STORAGE_KEY);
+      if (!raw) { setCartLoaded(true); return; }
+      const saved = JSON.parse(raw);
+      const savedAt = new Date(saved.savedAt || 0).getTime();
+      const age = Date.now() - savedAt;
+      if (age > CART_TTL_MS) {
+        // Expiró → limpiar
+        localStorage.removeItem(CART_STORAGE_KEY);
+        setCartLoaded(true);
+        return;
+      }
+      // Filtrar productos: solo los que aún existen y no están archivados
+      const productMap = {};
+      products.forEach(p => { productMap[p.id] = p; });
+      const validCart = (saved.items || [])
+        .map(savedItem => {
+          const current = productMap[savedItem.id];
+          if (!current) return null; // ya no existe
+          if (current.archived) return null; // archivado
+          return current; // usar datos frescos del producto
+        })
+        .filter(Boolean);
+      if (validCart.length > 0) {
+        setCart(validCart);
+        // Restaurar tallas, colores y cantidades
+        if (saved.sizes) setSizes(prev => ({ ...prev, ...saved.sizes }));
+        if (saved.colors) setColors(prev => ({ ...prev, ...saved.colors }));
+        if (saved.qtys) setQtys(prev => ({ ...prev, ...saved.qtys }));
+      }
+      setCartLoaded(true);
+    } catch (err) {
+      console.error('Error cargando carrito:', err);
+      setCartLoaded(true);
+    }
+  }, [loading, products, cartLoaded]);
+
+  // Guardar carrito en localStorage cuando cambia (solo después de cargar)
+  useEffect(() => {
+    if (!cartLoaded) return;
+    try {
+      if (cart.length === 0) {
+        localStorage.removeItem(CART_STORAGE_KEY);
+        return;
+      }
+      // Guardar IDs + selecciones para reconstruir al volver
+      const data = {
+        items: cart.map(p => ({ id: p.id })),
+        sizes: {},
+        colors: {},
+        qtys: {},
+        savedAt: new Date().toISOString(),
+      };
+      cart.forEach(p => {
+        if (sizes[p.id]) data.sizes[p.id] = sizes[p.id];
+        if (colors[p.id]) data.colors[p.id] = colors[p.id];
+        if (qtys[p.id]) data.qtys[p.id] = qtys[p.id];
+      });
+      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(data));
+    } catch (err) {
+      console.error('Error guardando carrito:', err);
+    }
+  }, [cart, sizes, colors, qtys, cartLoaded]);
+
+  // Función para vaciar el carrito completo
+  function clearCart() {
+    if (cart.length === 0) return;
+    if (!confirm('¿Vaciar todo el carrito?')) return;
+    setCart([]);
+    try { localStorage.removeItem(CART_STORAGE_KEY); } catch {}
+    setShowCart(false);
+  }
   const [categories, setCategories] = useState(CATEGORIES_FALLBACK);
   const [checkoutProduct, setCheckoutProduct] = useState(null);
   const [editorialCfg, setEditorialCfg] = useState(null);
@@ -1642,7 +1748,7 @@ export default function CatalogoPage() {
 
       {/* CART */}
       {showCart && cart.length > 0 && (
-        <CartDrawer cart={cart} onClose={() => setShowCart(false)} onRemove={id => setCart(prev => prev.filter(x => x.id !== id))} wa={wa} sizes={sizes} colors={colors} qtys={qtys} onPayAll={handlePayCart} />
+        <CartDrawer cart={cart} onClose={() => setShowCart(false)} onRemove={id => setCart(prev => prev.filter(x => x.id !== id))} wa={wa} sizes={sizes} colors={colors} qtys={qtys} onPayAll={handlePayCart} onClear={clearCart} />
       )}
 
       {/* TOAST agregar al carrito */}
