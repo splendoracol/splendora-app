@@ -735,6 +735,29 @@ export default function HomePage() {
   const visibleProducts = useMemo(() => products.filter(p => !p.archived), [products]);
   const archivedProducts = useMemo(() => products.filter(p => p.archived), [products]);
 
+  // ── STATS POR PRODUCTO (cantidad vendida histórica + última venta) ──
+  // Se usa para "top más vendidos" y badges. Toma TODOS los orders no cancelados.
+  const productStats = useMemo(() => {
+    const stats = {};
+    const nonCanc = orders.filter(o => o.status !== 'cancelled');
+    nonCanc.forEach(o => {
+      (o.items || []).forEach(it => {
+        const id = it.productId;
+        if (!id) return;
+        if (!stats[id]) stats[id] = { sold: 0, lastSoldAt: 0 };
+        stats[id].sold += (Number(it.qty) || 0);
+        const date = new Date(o.created_at).getTime();
+        if (date > stats[id].lastSoldAt) stats[id].lastSoldAt = date;
+      });
+    });
+    return stats;
+  }, [orders]);
+
+  // States para filtros y orden de inventario
+  const [invFilter, setInvFilter] = useState('all'); // 'all' | 'low' | 'out' | 'archived'
+  const [invSort, setInvSort] = useState('recent'); // 'recent' | 'topselling' | 'stock_low' | 'name' | 'price'
+  const [showTopSelling, setShowTopSelling] = useState(false);
+
   // Metrics
   const m = useMemo(() => {
     // Inversión actual en inventario = Σ(costo_unitario × stock), solo productos activos
@@ -768,68 +791,89 @@ export default function HomePage() {
     const ex = filteredExpenses.reduce((s, e) => s + (e.amount || 0), 0);
     const nt = rv - cs - ex - shippingIncome; // Ganancia neta real del negocio (sin contar envío pass-through)
 
-    // ── RESERVA DE SPLENDORA ──
-    // Por cada producto vendido, la bolsa + envío se apartan para SPLENDORA
-    // (es plata para reponer supplies de la marca, no entra a la distribución).
-    // Se calcula multiplicando (cost_bag + cost_shipping) × qty vendida de cada producto.
-    const splendoraReserve = nonCanc.reduce((acc, o) => {
-      return acc + (o.items || []).reduce((a, it) => {
-        const prod = products.find(p => p.id === it.productId);
-        if (!prod) return a;
-        const perUnit = (prod.cost_bag || 0) + (prod.cost_shipping || 0);
-        return a + perUnit * (it.qty || 0);
-      }, 0);
-    }, 0);
+    // ── DISTRIBUCIÓN DE GANANCIAS ──
+    // Modelo SPLENDORA (según documento oficial):
+    //   20% → Reserva publicidad (Ads)
+    //   10% → Reserva marca (paga bolsas, envío interno, mejoras web, gastos de marca)
+    //   35% → Socia 1
+    //   35% → Socia 2
+    //
+    // Los gastos registrados se descuentan en este orden:
+    //   1) Primero del 10% Marca (es lo lógico, son gastos de marca)
+    //   2) Luego del 20% Ads (overflow)
+    //   3) Por último de las socias (50/50) si aún hay déficit
+    //
+    // cost_total ya incluye bolsa + envío interno (no se duplica con reserva).
+    // El envío cobrado a la clienta NO entra a distribución (pass-through al mensajero).
+    const gross = productRevenue - cs; // ganancia bruta = ventas productos - costos
+    const adsBase = Math.max(0, gross * 0.20);
+    const brandBase = Math.max(0, gross * 0.10);
+    const socBase = Math.max(0, gross * 0.35);
 
-    // ── DISTRIBUCIÓN ──
-    // Regla: primero se separa la reserva de SPLENDORA (bolsa + envío interno de producto).
-    // Luego, de la ganancia bruta RESTANTE (sin envío cobrado a clienta) se aplica 10% / 45% / 45%.
-    // Los gastos salen primero del 10% de SPLENDORA.
-    // Si el 10% no alcanza, las socias cubren el déficit 50/50.
-    // El envío cobrado a clienta NO entra a distribución (es pass-through, se paga al mensajero).
-    const gross = productRevenue - cs; // ganancia bruta de productos (sin envío pass-through)
-    const distributable = Math.max(0, gross - splendoraReserve); // base para la división
-    const bizBase = distributable * 0.10;
-    const socBase = distributable * 0.45;
-    let biz, s1, s2, deficitCoveredBySocia = 0, expensesAbsorbedByBiz = 0;
-    if (ex <= bizBase) {
-      biz = bizBase - ex;
-      s1 = socBase;
-      s2 = socBase;
-      expensesAbsorbedByBiz = ex;
+    let ads, brand, s1, s2;
+    let expensesAbsorbedByBrand = 0;
+    let expensesAbsorbedByAds = 0;
+    let deficitCoveredBySocia = 0;
+
+    let remainingExpenses = ex;
+
+    // Paso 1: descontar del Brand (10%)
+    if (remainingExpenses <= brandBase) {
+      brand = brandBase - remainingExpenses;
+      expensesAbsorbedByBrand = remainingExpenses;
+      remainingExpenses = 0;
     } else {
-      biz = 0;
-      const deficit = ex - bizBase;
-      deficitCoveredBySocia = deficit / 2;
-      s1 = socBase - deficitCoveredBySocia;
-      s2 = socBase - deficitCoveredBySocia;
-      expensesAbsorbedByBiz = bizBase;
+      brand = 0;
+      expensesAbsorbedByBrand = brandBase;
+      remainingExpenses -= brandBase;
     }
-    // SPLENDORA total = reserva (bolsa+envío) + su 10% (o 0 si se consumió con gastos)
-    const bizTotal = splendoraReserve + biz;
+
+    // Paso 2: descontar del Ads (20%) si aún queda déficit
+    if (remainingExpenses <= adsBase) {
+      ads = adsBase - remainingExpenses;
+      expensesAbsorbedByAds = remainingExpenses;
+      remainingExpenses = 0;
+    } else {
+      ads = 0;
+      expensesAbsorbedByAds = adsBase;
+      remainingExpenses -= adsBase;
+    }
+
+    // Paso 3: lo que queda lo cubren las socias 50/50
+    deficitCoveredBySocia = remainingExpenses / 2;
+    s1 = socBase - deficitCoveredBySocia;
+    s2 = socBase - deficitCoveredBySocia;
+
+    // Mantenemos compatibilidad con código viejo (biz, bizTotal, splendoraReserve)
+    const splendoraReserve = 0; // ya NO se usa, se mantiene en 0
+    const biz = brand; // alias para no romper código viejo
+    const bizTotal = brand + ads; // SPLENDORA total = brand + ads
+    const expensesAbsorbedByBiz = expensesAbsorbedByBrand + expensesAbsorbedByAds;
 
     const paidOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'paid').length;
     const partialOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'partial').length;
     const pendingPayOrders = nonCanc.filter(o => (o.payment_status || 'pending') === 'pending').length;
 
-    // Ganancia proyectada si se vende TODO el inventario actual
-    // = Σ((precio - costo total) × stock)
-    // Pero ojo: la reserva (bolsa+envío) × stock también se aparta para SPLENDORA.
-    const projReserve = visibleProducts.reduce((s, p) => s + ((p.cost_bag || 0) + (p.cost_shipping || 0)) * (p.stock || 0), 0);
+    // ── Proyección si se vende TODO el inventario actual ──
+    // Mismo modelo: 20% Ads + 10% Marca + 35% s1 + 35% s2
     const projGross = visibleProducts.reduce((s, p) => s + ((p.price || 0) - (p.cost_total || 0)) * (p.stock || 0), 0);
-    const projDistributable = Math.max(0, projGross - projReserve);
-    const projProfit = projGross; // ganancia total bruta (informativa)
-    const projBizShare = projDistributable * 0.10;
-    const projBiz = projReserve + projBizShare; // SPLENDORA se queda con reserva + su 10%
-    const projS1 = projDistributable * 0.45;
-    const projS2 = projDistributable * 0.45;
+    const projProfit = projGross; // ganancia total bruta proyectada
+    const projAds = projGross * 0.20;
+    const projBrand = projGross * 0.10;
+    const projBiz = projAds + projBrand; // SPLENDORA total proyectada
+    const projS1 = projGross * 0.35;
+    const projS2 = projGross * 0.35;
 
     return {
       ic, ir, dn, rv, cs, ex, nt, biz, bizTotal, s1, s2, pc, gross, cashReceived,
-      splendoraReserve, distributable, shippingIncome, productRevenue,
-      deficitCoveredBySocia, expensesAbsorbedByBiz,
+      splendoraReserve, shippingIncome, productRevenue,
+      ads, brand,
+      adsBase, brandBase, socBase,
+      expensesAbsorbedByBrand, expensesAbsorbedByAds, expensesAbsorbedByBiz,
+      deficitCoveredBySocia,
       paidOrders, partialOrders, pendingPayOrders,
       projProfit, projBiz, projS1, projS2,
+      projAds, projBrand,
       // Unidades totales vendidas en el periodo (suma de qty en items de pedidos no cancelados)
       totalProductsSold: nonCanc.reduce((s, o) => s + (o.items || []).reduce((a, i) => a + (i.qty || 0), 0), 0),
       totalUnits: visibleProducts.reduce((s, p) => s + (p.stock || 0), 0),
@@ -1142,19 +1186,20 @@ export default function HomePage() {
             <div className="neu-card" style={{ marginTop: 14 }}>
               <div onClick={() => toggleDash(setDashSocias, dashSocias, 'dash_socias')}
                 style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: dashSocias ? 12 : 0, userSelect: 'none' }}>
-                <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5 }}>División (10% / 45% / 45%)</div>
+                <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5 }}>División (20% Ads / 10% Marca / 35% / 35%)</div>
                 <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{dashSocias ? '▾' : '▸'}</span>
               </div>
               {dashSocias && (
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                   {[
-                    { n: 'SPLENDORA', p: '10% + reserva', v: m.bizTotal, c: '#4A6FA5', sub: m.splendoraReserve > 0 ? `Reserva: ${cur(m.splendoraReserve)}` : null },
-                    { n: config.partner1, p: '45%', v: m.s1, c: '#1A1D23' },
-                    { n: config.partner2, p: '45%', v: m.s2, c: '#1A1D23' },
+                    { n: '📢 Ads', p: '20%', v: m.ads, c: '#1A1D23', sub: m.expensesAbsorbedByAds > 0 ? `Cubrió ${cur(m.expensesAbsorbedByAds)}` : null },
+                    { n: '🏷 Marca', p: '10%', v: m.brand, c: '#4A6FA5', sub: m.expensesAbsorbedByBrand > 0 ? `Cubrió ${cur(m.expensesAbsorbedByBrand)}` : null },
+                    { n: config.partner1, p: '35%', v: m.s1, c: '#1A1D23', sub: m.deficitCoveredBySocia > 0 ? `−${cur(m.deficitCoveredBySocia)}` : null },
+                    { n: config.partner2, p: '35%', v: m.s2, c: '#1A1D23', sub: m.deficitCoveredBySocia > 0 ? `−${cur(m.deficitCoveredBySocia)}` : null },
                   ].map((x, i) => (
-                    <div key={i} className="neu-card neu-pressed" style={{ flex: 1, textAlign: 'center', padding: 10 }}>
+                    <div key={i} className="neu-card neu-pressed" style={{ textAlign: 'center', padding: 10 }}>
                       <div style={{ fontSize: 8, color: '#6B7280' }}>{x.n} ({x.p})</div>
-                      <div style={{ fontSize: 13, fontWeight: 800, marginTop: 4, color: x.c }}>{cur(x.v)}</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, marginTop: 4, color: x.v < 0 ? '#C0504E' : x.c }}>{cur(x.v)}</div>
                       {x.sub && <div style={{ fontSize: 7, color: '#9CA3AF', marginTop: 3 }}>{x.sub}</div>}
                     </div>
                   ))}
@@ -1175,14 +1220,15 @@ export default function HomePage() {
                     <div style={{ fontSize: 8, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>Ganancia total proyectada</div>
                     <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: m.projProfit >= 0 ? '#4A9E6B' : '#C0504E' }}>{cur(m.projProfit)}</div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                     {[
-                      { n: 'SPLENDORA', p: '10%', v: m.projBiz, c: '#4A6FA5' },
-                      { n: config.partner1, p: '45%', v: m.projS1, c: '#1A1D23' },
-                      { n: config.partner2, p: '45%', v: m.projS2, c: '#1A1D23' },
+                      { n: '📢 Ads', p: '20%', v: m.projAds, c: '#1A1D23' },
+                      { n: '🏷 Marca', p: '10%', v: m.projBrand, c: '#4A6FA5' },
+                      { n: config.partner1, p: '35%', v: m.projS1, c: '#1A1D23' },
+                      { n: config.partner2, p: '35%', v: m.projS2, c: '#1A1D23' },
                     ].map((x, i) => (
-                      <div key={i} style={{ flex: 1, textAlign: 'center', padding: 8, borderRadius: 10, background: '#F0F2F5' }}>
-                        <div style={{ fontSize: 7, color: '#6B7280' }}>{x.n}</div>
+                      <div key={i} style={{ textAlign: 'center', padding: 8, borderRadius: 10, background: '#F0F2F5' }}>
+                        <div style={{ fontSize: 7, color: '#6B7280' }}>{x.n} ({x.p})</div>
                         <div style={{ fontSize: 12, fontWeight: 800, marginTop: 2, color: x.c }}>{cur(x.v)}</div>
                       </div>
                     ))}
@@ -1229,62 +1275,270 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Totales de inventario */}
-            <div className="neu-card" style={{ padding: 12, marginBottom: 12 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Totales del inventario</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
-                <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
-                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Unidades</div>
-                  <div style={{ fontSize: 15, fontWeight: 800, marginTop: 2 }}>{m.totalUnits}</div>
-                </div>
-                <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
-                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Inversión</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2, color: '#4A6FA5' }}>{cur(m.ic)}</div>
-                </div>
-                <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
-                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Valor venta</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2, color: '#4A9E6B' }}>{cur(m.ir)}</div>
-                </div>
-              </div>
-              <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 6, textAlign: 'center' }}>Ganancia potencial: <b style={{ color: '#4A9E6B' }}>{cur(m.projProfit)}</b> si se vende todo</div>
-            </div>
+            {/* Calcular counters para filtros */}
+            {(() => {
+              const lowStockProducts = visibleProducts.filter(p => (p.stock || 0) > 0 && (p.stock || 0) <= 2);
+              const outOfStockProducts = visibleProducts.filter(p => (p.stock || 0) === 0);
+              const lowCount = lowStockProducts.length;
+              const outCount = outOfStockProducts.length;
+              const archivedCount = archivedProducts.length;
+              const totalCount = visibleProducts.length;
 
-            <div className="neu-card neu-pressed" style={{ padding: 0, marginBottom: 12 }}>
-              <input className="neu-input" placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ boxShadow: 'none', background: 'transparent' }} />
-            </div>
-            {visibleProducts.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.code || '').toLowerCase().includes(search.toLowerCase())).map(p => {
-              const inv = (p.cost_total || 0) * (p.stock || 0);
-              const val = (p.price || 0) * (p.stock || 0);
+              // Productos top vendidos (max 5)
+              const topSelling = [...visibleProducts]
+                .map(p => ({ ...p, _sold: productStats[p.id]?.sold || 0 }))
+                .filter(p => p._sold > 0)
+                .sort((a, b) => b._sold - a._sold)
+                .slice(0, 5);
+
               return (
-              <div key={p.id} className="neu-card" style={{ padding: 12, display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
-                <Thumb src={p.photo_url} size={50} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: '#4A6FA5', boxShadow: 'var(--pressed)', padding: '2px 7px', borderRadius: 6 }}>{p.code}</span>
-                    {p.discount > 0 && <span style={{ fontSize: 8, fontWeight: 700, color: '#C0504E', background: '#FEE2E2', padding: '1px 5px', borderRadius: 4 }}>-{p.discount}%</span>}
-                    {p.hide_price && <span style={{ fontSize: 8, fontWeight: 700, color: '#6B7280', background: '#E5E7EB', padding: '1px 5px', borderRadius: 4 }}>$ oculto</span>}
+                <>
+                  {/* Stats principales */}
+                  <div className="neu-card" style={{ padding: 12, marginBottom: 12 }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 }}>Resumen</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                      <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
+                        <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Unidades</div>
+                        <div style={{ fontSize: 15, fontWeight: 800, marginTop: 2 }}>{m.totalUnits}</div>
+                      </div>
+                      <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
+                        <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Stock bajo</div>
+                        <div style={{ fontSize: 15, fontWeight: 800, marginTop: 2, color: lowCount > 0 ? '#D4A843' : '#6B7280' }}>{lowCount}</div>
+                      </div>
+                      <div className="neu-card neu-pressed" style={{ padding: 8, textAlign: 'center' }}>
+                        <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Agotados</div>
+                        <div style={{ fontSize: 15, fontWeight: 800, marginTop: 2, color: outCount > 0 ? '#C0504E' : '#6B7280' }}>{outCount}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 8, textAlign: 'center' }}>
+                      Inversión <b style={{ color: '#4A6FA5' }}>{cur(m.ic)}</b> · Valor venta <b style={{ color: '#4A9E6B' }}>{cur(m.ir)}</b>
+                    </div>
                   </div>
-                  <div style={{ fontWeight: 700, fontSize: 13, marginTop: 2 }}>{p.name}</div>
-                  <div style={{ fontSize: 10, color: '#6B7280' }}>
-                    {(p.categories || [p.category]).join(', ')} · {(p.sizes || []).join(', ') || p.size}{(p.colors && p.colors.length > 0) ? ` · ${p.colors.join(', ')}` : p.color ? ` · ${p.color}` : ''} · {cur(p.price)}
+
+                  {/* Alerta stock bajo */}
+                  {lowCount > 0 && (
+                    <div style={{
+                      background: '#FEF3C7',
+                      borderLeft: '3px solid #D4A843',
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      marginBottom: 12,
+                      fontSize: 11,
+                      color: '#92400E',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      cursor: 'pointer',
+                    }} onClick={() => setInvFilter('low')}>
+                      <span>⚠️</span>
+                      <span><b>{lowCount} producto{lowCount === 1 ? '' : 's'}</b> con stock bajo (≤ 2 unidades). Tap para ver.</span>
+                    </div>
+                  )}
+
+                  {/* Top 5 más vendidos (colapsable) */}
+                  {topSelling.length > 0 && (
+                    <div className="neu-card" style={{ padding: 12, marginBottom: 12 }}>
+                      <div onClick={() => setShowTopSelling(!showTopSelling)}
+                        style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showTopSelling ? 10 : 0, userSelect: 'none' }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1.5 }}>🏆 Top {topSelling.length} más vendidos</div>
+                        <span style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 700 }}>{showTopSelling ? '▾' : '▸'}</span>
+                      </div>
+                      {showTopSelling && (
+                        <div>
+                          {topSelling.map((p, i) => {
+                            const rankColors = ['#D4A843', '#9CA3AF', '#B45309', '#1A1D23', '#1A1D23'];
+                            return (
+                              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: i < topSelling.length - 1 ? '1px solid #E5E7EB' : 'none' }}>
+                                <div style={{
+                                  width: 22, height: 22, borderRadius: '50%',
+                                  background: rankColors[i], color: '#FFF',
+                                  fontSize: 10, fontWeight: 800,
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  flexShrink: 0,
+                                }}>{i + 1}</div>
+                                <Thumb src={p.photo_url} size={36} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                                  <div style={{ fontSize: 9, color: '#6B7280' }}>{p.code} · Stock: {p.stock}</div>
+                                </div>
+                                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                  <div style={{ fontSize: 14, fontWeight: 800, color: '#4A9E6B' }}>{p._sold}</div>
+                                  <div style={{ fontSize: 8, color: '#9CA3AF', textTransform: 'uppercase' }}>vendidos</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Filtros pill */}
+                  <div style={{ display: 'flex', gap: 5, overflowX: 'auto', paddingBottom: 4, marginBottom: 8 }}>
+                    {[
+                      { id: 'all', label: 'Todos', count: totalCount },
+                      { id: 'low', label: '⚠️ Stock bajo', count: lowCount, color: '#D4A843' },
+                      { id: 'out', label: '🔴 Agotados', count: outCount, color: '#C0504E' },
+                      { id: 'archived', label: '📦 Archivados', count: archivedCount, color: '#6B7280' },
+                    ].map(opt => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setInvFilter(opt.id)}
+                        style={{
+                          flexShrink: 0,
+                          padding: '6px 12px',
+                          borderRadius: 100,
+                          fontSize: 10, fontWeight: 700,
+                          background: invFilter === opt.id ? '#1A1D23' : '#F0F2F5',
+                          color: invFilter === opt.id ? '#FFF' : '#6B7280',
+                          cursor: 'pointer',
+                          border: 'none',
+                          boxShadow: invFilter === opt.id ? '3px 3px 6px #D1D3D6, -3px -3px 6px #FFFFFF' : 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          fontFamily: "'Montserrat', sans-serif",
+                        }}>
+                        <span>{opt.label}</span>
+                        <span style={{
+                          background: invFilter === opt.id ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.08)',
+                          padding: '1px 6px', borderRadius: 8, fontSize: 9,
+                        }}>{opt.count}</span>
+                      </button>
+                    ))}
                   </div>
-                  <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 3 }}>
-                    Inv: <b style={{ color: '#4A6FA5' }}>{cur(inv)}</b> · Venta: <b style={{ color: '#4A9E6B' }}>{cur(val)}</b>
+
+                  {/* Búsqueda + Orden */}
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                    <div className="neu-pressed" style={{ flex: 1, padding: 0, borderRadius: 8 }}>
+                      <input className="neu-input" placeholder="🔍 Buscar..." value={search} onChange={e => setSearch(e.target.value)} style={{ boxShadow: 'none', background: 'transparent', width: '100%' }} />
+                    </div>
+                    <select
+                      value={invSort}
+                      onChange={e => setInvSort(e.target.value)}
+                      style={{
+                        padding: '8px 10px',
+                        background: '#F0F2F5',
+                        border: 'none',
+                        borderRadius: 8,
+                        fontSize: 11, fontWeight: 600,
+                        color: '#1A1D23',
+                        boxShadow: 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF',
+                        fontFamily: "'Montserrat', sans-serif",
+                        cursor: 'pointer',
+                      }}>
+                      <option value="recent">📅 Recientes</option>
+                      <option value="topselling">🏆 Más vendidos</option>
+                      <option value="stock_low">📉 Stock bajo</option>
+                      <option value="name">🔤 Nombre</option>
+                      <option value="price">💰 Precio</option>
+                    </select>
                   </div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-                  <div className="neu-card neu-pressed" style={{ padding: '3px 10px', borderRadius: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 800, color: p.stock === 0 ? '#C0504E' : p.stock <= 2 ? '#D4A843' : '#4A9E6B' }}>{p.stock}</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <button className="neu-btn neu-btn-sm" onClick={() => { setEditProd(p); setShowProd(true); }} style={{ padding: '3px 7px' }}>✎</button>
-                    <button className="neu-btn neu-btn-sm" onClick={() => {
-                      if (confirm(`¿Archivar "${p.name}"?\n\n• El producto se oculta del inventario, catálogo y pedidos nuevos\n• Los pedidos viejos que lo vendieron siguen funcionando bien\n• Lo puedes reactivar cuando vuelvas a comprarlo\n\nNO se pierde el historial.`)) archiveProduct(p.id);
-                    }} style={{ padding: '3px 7px', fontSize: 10 }} title="Archivar (se oculta pero no se borra)">📦</button>
-                  </div>
-                </div>
-              </div>
-            );})}
+
+                  {/* Lista filtrada y ordenada */}
+                  {(() => {
+                    // Pool según filtro
+                    let pool;
+                    if (invFilter === 'low') pool = lowStockProducts;
+                    else if (invFilter === 'out') pool = outOfStockProducts;
+                    else if (invFilter === 'archived') pool = archivedProducts;
+                    else pool = visibleProducts;
+
+                    // Aplicar búsqueda
+                    let list = pool.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.code || '').toLowerCase().includes(search.toLowerCase()));
+
+                    // Aplicar orden
+                    if (invSort === 'topselling') {
+                      list = [...list].sort((a, b) => (productStats[b.id]?.sold || 0) - (productStats[a.id]?.sold || 0));
+                    } else if (invSort === 'stock_low') {
+                      list = [...list].sort((a, b) => (a.stock || 0) - (b.stock || 0));
+                    } else if (invSort === 'name') {
+                      list = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                    } else if (invSort === 'price') {
+                      list = [...list].sort((a, b) => (b.price || 0) - (a.price || 0));
+                    }
+                    // 'recent' = orden por defecto (created_at desc) ya viene del loadAll
+
+                    if (list.length === 0) {
+                      return (
+                        <div className="neu-card neu-pressed" style={{ padding: 20, textAlign: 'center', color: '#6B7280', fontSize: 12 }}>
+                          {invFilter === 'archived' ? 'No hay productos archivados' :
+                           invFilter === 'low' ? 'Ningún producto con stock bajo 🎉' :
+                           invFilter === 'out' ? 'Ningún producto agotado 🎉' :
+                           search ? 'Sin resultados para la búsqueda' :
+                           'No hay productos. ¡Crea el primero!'}
+                        </div>
+                      );
+                    }
+
+                    // Top sellers para badge "TOP VENTAS" (los top 3 históricos)
+                    const topSellerIds = new Set(topSelling.slice(0, 3).map(p => p.id));
+
+                    return list.map(p => {
+                      const inv = (p.cost_total || 0) * (p.stock || 0);
+                      const val = (p.price || 0) * (p.stock || 0);
+                      const stock = Number(p.stock) || 0;
+                      const isOut = stock === 0;
+                      const isLow = stock > 0 && stock <= 2;
+                      const isTopSeller = topSellerIds.has(p.id);
+                      const soldCount = productStats[p.id]?.sold || 0;
+
+                      return (
+                        <div key={p.id} className="neu-card" style={{
+                          padding: 12,
+                          display: 'flex',
+                          gap: 10,
+                          alignItems: 'center',
+                          marginBottom: 8,
+                          opacity: p.archived ? 0.7 : 1,
+                          borderLeft: isLow ? '3px solid #D4A843' : isOut ? '3px solid #C0504E' : 'none',
+                        }}>
+                          <Thumb src={p.photo_url} size={50} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 9, fontWeight: 700, color: '#4A6FA5', boxShadow: 'var(--pressed)', padding: '2px 7px', borderRadius: 6 }}>{p.code}</span>
+                              {p.archived && <span style={{ fontSize: 8, fontWeight: 700, background: '#E5E7EB', color: '#6B7280', padding: '2px 6px', borderRadius: 4 }}>📦 ARCHIVADO</span>}
+                              {!p.archived && isOut && <span style={{ fontSize: 8, fontWeight: 800, background: '#FEE2E2', color: '#991B1B', padding: '2px 6px', borderRadius: 4 }}>🔴 AGOTADO</span>}
+                              {!p.archived && isLow && <span style={{ fontSize: 8, fontWeight: 800, background: '#FEF3C7', color: '#92400E', padding: '2px 6px', borderRadius: 4 }}>⚠️ STOCK BAJO</span>}
+                              {!p.archived && isTopSeller && !isOut && <span style={{ fontSize: 8, fontWeight: 800, background: '#D1FAE5', color: '#065F46', padding: '2px 6px', borderRadius: 4 }}>🔥 TOP VENTAS</span>}
+                              {p.discount > 0 && <span style={{ fontSize: 8, fontWeight: 700, color: '#C0504E', background: '#FEE2E2', padding: '1px 5px', borderRadius: 4 }}>-{p.discount}%</span>}
+                              {p.is_new && <span style={{ fontSize: 8, fontWeight: 700, color: '#FFF', background: '#1A1D23', padding: '1px 5px', borderRadius: 4 }}>⭐ NUEVO</span>}
+                              {p.hide_price && <span style={{ fontSize: 8, fontWeight: 700, color: '#6B7280', background: '#E5E7EB', padding: '1px 5px', borderRadius: 4 }}>$ oculto</span>}
+                            </div>
+                            <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
+                            <div style={{ fontSize: 10, color: '#6B7280' }}>
+                              {(p.categories || [p.category]).join(', ')} · {cur(p.price)}
+                            </div>
+                            <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 3 }}>
+                              {soldCount > 0 && <>Vendidos: <b style={{ color: '#4A9E6B' }}>{soldCount}</b> · </>}
+                              Inv: <b style={{ color: '#4A6FA5' }}>{cur(inv)}</b> · Venta: <b style={{ color: '#4A9E6B' }}>{cur(val)}</b>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+                            <div className="neu-card neu-pressed" style={{ padding: '3px 10px', borderRadius: 8 }}>
+                              <span style={{ fontSize: 13, fontWeight: 800, color: isOut ? '#C0504E' : isLow ? '#D4A843' : '#4A9E6B' }}>{p.stock}</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              <button className="neu-btn neu-btn-sm" onClick={() => { setEditProd(p); setShowProd(true); }} style={{ padding: '3px 7px' }}>✎</button>
+                              {p.archived ? (
+                                <button className="neu-btn neu-btn-sm" onClick={() => {
+                                  if (confirm(`¿Restaurar "${p.name}"?\n\nVolverá a estar disponible en inventario y catálogo.`)) reactivateProduct(p.id);
+                                }} style={{ padding: '3px 7px', fontSize: 10 }} title="Restaurar">↺</button>
+                              ) : (
+                                <button className="neu-btn neu-btn-sm" onClick={() => {
+                                  if (confirm(`¿Archivar "${p.name}"?\n\n• El producto se oculta del inventario, catálogo y pedidos nuevos\n• Los pedidos viejos que lo vendieron siguen funcionando bien\n• Lo puedes reactivar cuando vuelvas a comprarlo\n\nNO se pierde el historial.`)) archiveProduct(p.id);
+                                }} style={{ padding: '3px 7px', fontSize: 10 }} title="Archivar (se oculta pero no se borra)">📦</button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -1698,29 +1952,37 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-                {[
-                  { n: 'SPLENDORA', p: '10% + reserva', v: m.bizTotal, c: '#4A6FA5', sub: [
-                    m.splendoraReserve > 0 ? `Reserva: ${cur(m.splendoraReserve)}` : null,
-                    m.expensesAbsorbedByBiz > 0 ? `Absorbió ${cur(m.expensesAbsorbedByBiz)} en gastos` : null,
-                  ].filter(Boolean).join(' · ') || null },
-                  { n: config.partner1, p: '45%', v: m.s1, sub: m.deficitCoveredBySocia > 0 ? `Cubrió ${cur(m.deficitCoveredBySocia)} de déficit` : null },
-                  { n: config.partner2, p: '45%', v: m.s2, sub: m.deficitCoveredBySocia > 0 ? `Cubrió ${cur(m.deficitCoveredBySocia)} de déficit` : null },
-                ].map((x, i) => (
-                  <div key={i} className="neu-card" style={{ flex: 1, textAlign: 'center', padding: 10 }}>
-                    <div style={{ fontSize: 8, color: '#6B7280' }}>{x.n} ({x.p})</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, marginTop: 3, color: x.v < 0 ? '#C0504E' : (x.c || '#4A6FA5') }}>{cur(x.v)}</div>
-                    {x.sub && <div style={{ fontSize: 7, color: '#9CA3AF', marginTop: 3, lineHeight: 1.3 }}>{x.sub}</div>}
-                  </div>
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 14 }}>
+                <div className="neu-card" style={{ textAlign: 'center', padding: 10, background: '#F0F2F5' }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>📢 RESERVA ADS (20%)</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, marginTop: 3, color: m.ads < m.adsBase ? '#D4A843' : '#1A1D23' }}>{cur(m.ads)}</div>
+                  {m.expensesAbsorbedByAds > 0 && <div style={{ fontSize: 7, color: '#9CA3AF', marginTop: 3, lineHeight: 1.3 }}>Cubrió {cur(m.expensesAbsorbedByAds)} en gastos</div>}
+                </div>
+                <div className="neu-card" style={{ textAlign: 'center', padding: 10, background: '#F0F2F5' }}>
+                  <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>🏷 RESERVA MARCA (10%)</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, marginTop: 3, color: m.brand < m.brandBase ? '#D4A843' : '#1A1D23' }}>{cur(m.brand)}</div>
+                  {m.expensesAbsorbedByBrand > 0 && <div style={{ fontSize: 7, color: '#9CA3AF', marginTop: 3, lineHeight: 1.3 }}>Cubrió {cur(m.expensesAbsorbedByBrand)} en gastos</div>}
+                </div>
+                <div className="neu-card" style={{ textAlign: 'center', padding: 10 }}>
+                  <div style={{ fontSize: 8, color: '#6B7280' }}>{config.partner1} (35%)</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 3, color: m.s1 < 0 ? '#C0504E' : '#1A1D23' }}>{cur(m.s1)}</div>
+                  {m.deficitCoveredBySocia > 0 && <div style={{ fontSize: 7, color: '#9CA3AF', marginTop: 3, lineHeight: 1.3 }}>Cubrió {cur(m.deficitCoveredBySocia)} de déficit</div>}
+                </div>
+                <div className="neu-card" style={{ textAlign: 'center', padding: 10 }}>
+                  <div style={{ fontSize: 8, color: '#6B7280' }}>{config.partner2} (35%)</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 3, color: m.s2 < 0 ? '#C0504E' : '#1A1D23' }}>{cur(m.s2)}</div>
+                  {m.deficitCoveredBySocia > 0 && <div style={{ fontSize: 7, color: '#9CA3AF', marginTop: 3, lineHeight: 1.3 }}>Cubrió {cur(m.deficitCoveredBySocia)} de déficit</div>}
+                </div>
               </div>
               <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, textAlign: 'center', fontStyle: 'italic', lineHeight: 1.5 }}>
-                * Ingresos = ventas del periodo (productos + envío cobrado). Ganancia neta = ingresos − costos − gastos − envío cobrado.<br/>
-                De cada producto vendido, bolsa + envío interno se aparta como reserva de SPLENDORA (para reponer supplies).<br/>
-                El envío cobrado a la clienta NO entra a distribución (es pass-through, se paga al mensajero).<br/>
-                Del resto se distribuye 10% SPLENDORA / 45% cada socia. Gastos salen del 10%; si no alcanza, socias cubren 50/50.
+                * Ingresos = ventas del periodo. Ganancia neta = ingresos − costos − gastos.<br/>
+                Distribución sobre la ganancia bruta: 20% Reserva Ads · 10% Reserva Marca · 35% cada socia.<br/>
+                Los gastos se descuentan primero del 10% Marca, luego del 20% Ads, último de las socias 50/50.
               </div>
             </div>
+
+            {/* Cálculo auxiliar para los bases (sin tocar m) */}
+            {(() => { return null; })()}
 
             {/* MONTHLY SALES CHART */}
             <div className="neu-card" style={{ padding: 14, marginBottom: 14 }}>
@@ -1891,12 +2153,12 @@ export default function HomePage() {
                       <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 2 }}>Costo: {cur(ordersTableTotals.costTotal)}</div>
                     </div>
                     <div className="neu-card neu-pressed" style={{ padding: 8 }}>
-                      <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{config.partner1} (45%)</div>
+                      <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{config.partner1} (35%)</div>
                       <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2 }}>{cur(ordersTableTotals.s1Total)}</div>
                       <div style={{ fontSize: 8, color: ordersTableTotals.s1ToPay > 0 ? '#D4A843' : '#4A9E6B', marginTop: 2, fontWeight: 700 }}>Por pagar: {cur(ordersTableTotals.s1ToPay)}</div>
                     </div>
                     <div className="neu-card neu-pressed" style={{ padding: 8 }}>
-                      <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{config.partner2} (45%)</div>
+                      <div style={{ fontSize: 7, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>{config.partner2} (35%)</div>
                       <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2 }}>{cur(ordersTableTotals.s2Total)}</div>
                       <div style={{ fontSize: 8, color: ordersTableTotals.s2ToPay > 0 ? '#D4A843' : '#4A9E6B', marginTop: 2, fontWeight: 700 }}>Por pagar: {cur(ordersTableTotals.s2ToPay)}</div>
                     </div>
