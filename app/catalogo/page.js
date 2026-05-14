@@ -840,7 +840,14 @@ function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors, qtys, onPayAll
     <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 900, background: '#FFF', borderRadius: '20px 20px 0 0', boxShadow: '0 -4px 20px rgba(0,0,0,0.1)', padding: '16px 20px max(16px, env(safe-area-inset-bottom))', maxHeight: '70vh', overflow: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ fontWeight: 800, fontSize: 14 }}>🛒 Carrito ({cart.length})</div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#6B7280' }}>×</button>
+        <button onClick={onClose} title="Cerrar carrito" style={{
+          background: '#F0F2F5', border: 'none',
+          width: 32, height: 32, borderRadius: '50%',
+          fontSize: 16, fontWeight: 700, color: '#1A1D23',
+          cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '2px 2px 5px #D1D3D6, -2px -2px 5px #FFFFFF',
+        }}>×</button>
       </div>
       {cart.map((p, i) => {
         const sz = sizes[p.id] || (p.sizes && p.sizes.length > 0 ? p.sizes[0] : p.size);
@@ -856,7 +863,21 @@ function CartDrawer({ cart, onClose, onRemove, wa, sizes, colors, qtys, onPayAll
               <div style={{ fontSize: 9, color: '#6B7280' }}>{p.code} · {sz}{cl ? ` · ${cl}` : ''}{qt > 1 ? ` · x${qt}` : ''}</div>
             </div>
             {!p.hide_price && <div style={{ fontWeight: 800, fontSize: 13, flexShrink: 0 }}>{cur((p.discount > 0 ? Math.round(p.price * (1 - p.discount / 100)) : p.price) * qt)}</div>}
-            <button onClick={() => onRemove(p.id)} style={{ background: 'none', border: 'none', color: '#C0504E', cursor: 'pointer', fontSize: 14 }}>✕</button>
+            <button
+              onClick={() => onRemove(p.id)}
+              title="Quitar del carrito"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#9CA3AF',
+                cursor: 'pointer',
+                fontSize: 14,
+                padding: '6px 8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>🗑</button>
           </div>
         );
       })}
@@ -919,6 +940,13 @@ export default function CatalogoPage() {
   const [selected, setSelected] = useState(null);
   const [cart, setCart] = useState([]);
   const [showCart, setShowCart] = useState(false);
+  // Toast de notificación al agregar al carrito
+  const [cartToast, setCartToast] = useState(null);
+  useEffect(() => {
+    if (!cartToast) return;
+    const t = setTimeout(() => setCartToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [cartToast]);
   const [categories, setCategories] = useState(CATEGORIES_FALLBACK);
   const [checkoutProduct, setCheckoutProduct] = useState(null);
   const [editorialCfg, setEditorialCfg] = useState(null);
@@ -1042,8 +1070,22 @@ export default function CatalogoPage() {
   }
 
   function addToCart(p) {
-    if (cart.find(x => x.id === p.id)) { alert('Ya está en el carrito'); return; }
-    setCart(prev => [...prev, p]); setSelected(null); setShowCart(true);
+    if (cart.find(x => x.id === p.id)) {
+      // Si ya está, mostrar toast informativo pero NO bloquear con alert
+      showCartToast('Este producto ya está en tu carrito', 'info');
+      setSelected(null);
+      return;
+    }
+    setCart(prev => [...prev, p]);
+    setSelected(null);
+    // NO abrir el carrito automáticamente — la clienta sigue viendo productos
+    // Mostrar toast de confirmación
+    showCartToast('Agregado al carrito', 'success');
+  }
+
+  // ── Toast notification para agregar al carrito ──
+  function showCartToast(message, type = 'success') {
+    setCartToast({ message, type, id: Date.now() });
   }
 
   async function handlePayMP(p) {
@@ -1602,6 +1644,51 @@ export default function CatalogoPage() {
       {showCart && cart.length > 0 && (
         <CartDrawer cart={cart} onClose={() => setShowCart(false)} onRemove={id => setCart(prev => prev.filter(x => x.id !== id))} wa={wa} sizes={sizes} colors={colors} qtys={qtys} onPayAll={handlePayCart} />
       )}
+
+      {/* TOAST agregar al carrito */}
+      {cartToast && (
+        <div
+          key={cartToast.id}
+          style={{
+            position: 'fixed',
+            top: 20,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 9999,
+            background: cartToast.type === 'success' ? '#1A1D23' : '#4A6FA5',
+            color: '#FFF',
+            padding: '12px 20px',
+            borderRadius: 100,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+            fontSize: 13,
+            fontWeight: 700,
+            letterSpacing: 0.5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            animation: 'splendora-cart-toast-in 0.3s ease-out',
+            fontFamily: "'Montserrat', sans-serif",
+            maxWidth: '90vw',
+          }}>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 22,
+            height: 22,
+            borderRadius: '50%',
+            background: cartToast.type === 'success' ? '#10B981' : '#FFFFFF22',
+            fontSize: 13,
+          }}>{cartToast.type === 'success' ? '✓' : 'ⓘ'}</span>
+          <span>{cartToast.message}</span>
+        </div>
+      )}
+      <style>{`
+        @keyframes splendora-cart-toast-in {
+          from { opacity: 0; transform: translate(-50%, -16px); }
+          to { opacity: 1; transform: translate(-50%, 0); }
+        }
+      `}</style>
 
       {/* FOOTER */}
       <div style={{ textAlign: 'center', padding: '24px 20px 32px', background: '#FFF', marginTop: 20 }}>
