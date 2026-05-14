@@ -133,7 +133,6 @@ function isCombinationAvailable(product, size, color) {
 
 function PhotoNav({ photos, big }) {
   const [idx, setIdx] = useState(0);
-  // Touch swipe state
   const touchStartX = useRef(0);
   const touchEndX = useRef(0);
 
@@ -149,19 +148,24 @@ function PhotoNav({ photos, big }) {
     touchStartX.current = 0; touchEndX.current = 0;
   };
 
+  // big = vista modal (ratio 3/4 vertical, ideal para ropa)
+  // !big = card grid (180px alto fijo, como antes)
+  const photoStyle = big
+    ? { position: 'relative', width: '100%', aspectRatio: '3/4' }
+    : { position: 'relative', width: '100%', height: 180 };
+
   return (
     <div style={{ width: '100%' }}>
-      {/* Foto principal */}
       <div
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        style={{ position: 'relative', width: '100%', height: big ? 320 : 180 }}>
+        style={photoStyle}>
         <Image
           src={photos[idx]}
           alt=""
           fill
-          sizes={big ? '(max-width: 600px) 100vw, 400px' : '(max-width: 600px) 50vw, 200px'}
+          sizes={big ? '(max-width: 768px) 100vw, 460px' : '(max-width: 600px) 50vw, 200px'}
           style={{ objectFit: 'cover', borderRadius: big ? 14 : 12 }}
           quality={80}
         />
@@ -171,7 +175,6 @@ function PhotoNav({ photos, big }) {
               style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.92)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: big ? 36 : 24, height: big ? 36 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontWeight: 600 }}>‹</button>
             <button onClick={e => { e.stopPropagation(); setIdx(idx === photos.length - 1 ? 0 : idx + 1); }}
               style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.92)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: big ? 36 : 24, height: big ? 36 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontWeight: 600 }}>›</button>
-            {/* Contador foto X / N */}
             <div style={{ position: 'absolute', bottom: 10, right: 10, background: 'rgba(26, 29, 35, 0.75)', color: '#FFF', padding: big ? '4px 10px' : '2px 7px', borderRadius: 100, fontSize: big ? 10 : 9, fontWeight: 700, letterSpacing: 0.5, zIndex: 2 }}>
               {idx + 1} / {photos.length}
             </div>
@@ -179,7 +182,6 @@ function PhotoNav({ photos, big }) {
         )}
       </div>
 
-      {/* Thumbnails (solo en modal grande) */}
       {big && photos.length > 1 && (
         <div style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', paddingBottom: 4 }}>
           {photos.map((url, i) => (
@@ -187,11 +189,11 @@ function PhotoNav({ photos, big }) {
               key={i}
               onClick={(e) => { e.stopPropagation(); setIdx(i); }}
               style={{
-                width: 56, height: 56, borderRadius: 6,
+                width: 56, height: 72, borderRadius: 6,
                 flexShrink: 0, cursor: 'pointer', overflow: 'hidden',
                 position: 'relative',
                 border: i === idx ? '2px solid #1A1D23' : '2px solid transparent',
-                opacity: i === idx ? 1 : 0.65,
+                opacity: i === idx ? 1 : 0.6,
                 transition: 'all 0.15s',
               }}>
               <Image src={url} alt="" fill sizes="56px" style={{ objectFit: 'cover' }} quality={60} />
@@ -274,15 +276,69 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#F0F2F5', borderRadius: 20, width: '100%', maxWidth: 400, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-        <div style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', justifyContent: 'flex-end', padding: '12px 12px 0' }}>
-          <button onClick={onClose} style={{ background: 'rgba(0,0,0,0.5)', color: '#FFF', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
-        </div>
-        <div style={{ margin: '-20px 12px 0', borderRadius: 14, overflow: 'hidden', boxShadow: 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF' }}>
-          <PhotoNav photos={photos} big />
-        </div>
-        {disc && <div style={{ display: 'flex', justifyContent: 'flex-start', padding: '12px 20px 0' }}><span style={{ background: '#C0504E', color: '#FFF', fontSize: 12, fontWeight: 800, padding: '4px 12px', borderRadius: 8 }}>-{p.discount}% OFF</span></div>}
-        <div style={{ padding: '12px 20px 20px' }}>
+      <style>{`
+        .splendora-product-modal {
+          background: #F0F2F5;
+          border-radius: 20px;
+          width: 100%;
+          max-width: 920px;
+          max-height: 92vh;
+          overflow: auto;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        .splendora-product-modal-inner {
+          display: flex;
+          flex-direction: row;
+          gap: 0;
+        }
+        .splendora-product-modal-photo {
+          flex: 0 0 50%;
+          max-width: 50%;
+          padding: 20px;
+          position: relative;
+        }
+        .splendora-product-modal-info {
+          flex: 1;
+          min-width: 0;
+          padding: 24px 28px 28px;
+          display: flex;
+          flex-direction: column;
+        }
+        @media (max-width: 767px) {
+          .splendora-product-modal {
+            max-width: 420px;
+            max-height: 92vh;
+          }
+          .splendora-product-modal-inner {
+            flex-direction: column;
+          }
+          .splendora-product-modal-photo,
+          .splendora-product-modal-info {
+            flex: 1;
+            max-width: 100%;
+            padding: 12px;
+          }
+          .splendora-product-modal-info {
+            padding: 12px 20px 20px;
+          }
+        }
+      `}</style>
+      <div onClick={e => e.stopPropagation()} className="splendora-product-modal">
+        {/* Botón cerrar — flotante arriba derecha */}
+        <button onClick={onClose} style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(255,255,255,0.92)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: 36, height: 36, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>×</button>
+
+        <div className="splendora-product-modal-inner">
+          {/* COLUMNA IZQUIERDA: Foto + thumbnails */}
+          <div className="splendora-product-modal-photo">
+            <div style={{ borderRadius: 14, overflow: 'hidden', boxShadow: 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF', background: '#FAF8F5' }}>
+              <PhotoNav photos={photos} big />
+            </div>
+          </div>
+
+          {/* COLUMNA DERECHA: Info producto */}
+          <div className="splendora-product-modal-info">
+        {disc && <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 8 }}><span style={{ background: '#C0504E', color: '#FFF', fontSize: 12, fontWeight: 800, padding: '4px 12px', borderRadius: 8 }}>-{p.discount}% OFF</span></div>}
+        <div>
           <div style={{ fontSize: 9, color: '#4A6FA5', fontWeight: 700, letterSpacing: 0.5, marginBottom: 4 }}>{p.code}</div>
           <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>{p.name}</div>
           <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>{(p.categories || [p.category]).join(' · ')}</div>
@@ -426,6 +482,8 @@ function ProductModal({ product, onClose, wa, onAddCart, onWhatsApp, onPayMP, se
             <button onClick={() => onWhatsApp(p)} style={{ width: '100%', padding: '13px', background: '#25D366', color: '#fff', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif" }}>💬 Preguntar por WhatsApp</button>
             <button onClick={() => onAddCart(p)} style={{ width: '100%', padding: '13px', background: '#F0F2F5', color: '#1A1D23', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Montserrat', sans-serif", boxShadow: '3px 3px 6px #D1D3D6, -3px -3px 6px #FFFFFF' }}>🛒 Agregar al carrito</button>
           </div>
+        </div>
+        </div>
         </div>
       </div>
     </div>
