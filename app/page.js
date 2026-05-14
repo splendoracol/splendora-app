@@ -329,6 +329,8 @@ export default function HomePage() {
   const [expenses, setExpenses] = useState([]);
   const [config, setConfig] = useState({ partner1: 'DahiannaGs', partner2: 'Estelasuarez', split: 50, business_split: 10 });
   const [catCfg, setCatCfg] = useState({ banner_text: '', banner_image: '', banner_active: false, instagram_url: '', whatsapp_number: '', logo_url: '', share_image_url: '' });
+  const [editorialCfg, setEditorialCfg] = useState({ enabled: false, quote_text: '', photos: [], cta_text: 'Ver más', cta_type: 'none', cta_value: '' });
+  const [showEditorial, setShowEditorial] = useState(false);
   const [showProd, setShowProd] = useState(false);
   const [editProd, setEditProd] = useState(null);
   const [showOrd, setShowOrd] = useState(false);
@@ -525,7 +527,7 @@ export default function HomePage() {
   }, [session]);
 
   async function loadAll() {
-    const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }, { data: cats }, { data: po }, { data: customers }] = await Promise.all([
+    const [{ data: p }, { data: o }, { data: e }, { data: c }, { data: cc }, { data: cats }, { data: po }, { data: customers }, { data: ed }] = await Promise.all([
       supabase.from('products').select('*').order('created_at', { ascending: false }),
       supabase.from('orders').select('*').order('created_at', { ascending: false }),
       supabase.from('expenses').select('*').order('created_at', { ascending: false }),
@@ -534,11 +536,20 @@ export default function HomePage() {
       supabase.from('categories').select('name').order('name'),
       supabase.from('partner_payouts').select('*'),
       supabase.from('email_list').select('*').order('last_order_date', { ascending: false }),
+      supabase.from('editorial_quote').select('*').eq('id', 1).maybeSingle(),
     ]);
     setProducts(p || []); setOrders(o || []); setExpenses(e || []);
     setEmailList(customers || []);
     if (c) setConfig(c);
     if (cc) setCatCfg(cc);
+    if (ed) setEditorialCfg({
+      enabled: ed.enabled || false,
+      quote_text: ed.quote_text || '',
+      photos: ed.photos || [],
+      cta_text: ed.cta_text || 'Ver más',
+      cta_type: ed.cta_type || 'none',
+      cta_value: ed.cta_value || '',
+    });
     if (cats && cats.length > 0) setCategories(cats.map(x => x.name));
     // Construir mapa de payouts: "orderId_itemIdx_partnerKey" -> true/false
     const map = {};
@@ -686,6 +697,21 @@ export default function HomePage() {
   async function deleteExpense(id) { await supabase.from('expenses').delete().eq('id', id); loadAll(); }
   async function saveConfig(cfg) { await supabase.from('config').update(cfg).eq('id', 1); setConfig(cfg); setShowCfg(false); }
   async function saveCatCfg(cc) { await supabase.from('catalog_config').update(cc).eq('id', 1); setCatCfg(cc); setShowCatCfg(false); }
+  async function saveEditorial(ed) {
+    const clean = {
+      enabled: ed.enabled || false,
+      quote_text: ed.quote_text || '',
+      photos: ed.photos || [],
+      cta_text: ed.cta_text || 'Ver más',
+      cta_type: ed.cta_type || 'none',
+      cta_value: ed.cta_value || '',
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('editorial_quote').update(clean).eq('id', 1);
+    if (error) { alert('Error guardando editorial: ' + error.message); return; }
+    setEditorialCfg(ed);
+    setShowEditorial(false);
+  }
 
   // Monthly filters
   const filteredOrders = useMemo(() => {
@@ -1740,8 +1766,9 @@ export default function HomePage() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
               <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Catálogo</h2>
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button className="neu-btn neu-btn-sm" onClick={() => setShowCatCfg(true)}>🎨 Config</button>
+                <button className="neu-btn neu-btn-sm" onClick={() => setShowEditorial(true)}>📝 Editorial</button>
                 <a href="/catalogo" target="_blank" className="neu-btn neu-btn-accent neu-btn-sm" style={{ textDecoration: 'none' }}>🌐 Ver público</a>
               </div>
             </div>
@@ -2187,6 +2214,9 @@ export default function HomePage() {
       </Modal>
       <Modal open={showCatCfg} onClose={() => setShowCatCfg(false)} title="Configurar catálogo">
         <CatCfgForm cfg={catCfg} onSave={saveCatCfg} />
+      </Modal>
+      <Modal open={showEditorial} onClose={() => setShowEditorial(false)} title="📝 Sección Editorial">
+        <EditorialForm cfg={editorialCfg} categories={categories} onSave={saveEditorial} />
       </Modal>
       <Modal open={showBulk} onClose={() => setShowBulk(false)} title="📦 Carga masiva de productos" wide>
         <BulkForm categories={categories} existingProducts={products} onSave={async (items) => {
@@ -3924,6 +3954,233 @@ function ToastsContainer({ toasts, onDismiss, onTap }) {
           to { opacity: 1; transform: translateX(0); }
         }
       `}</style>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FORM: EditorialForm — Configura la sección Quote Editorial
+// del final del catálogo.
+// ═══════════════════════════════════════════════════════════════
+function EditorialForm({ cfg, categories, onSave }) {
+  const [f, setF] = useState({
+    enabled: cfg.enabled || false,
+    quote_text: cfg.quote_text || '',
+    photos: cfg.photos || [],
+    cta_text: cfg.cta_text || 'Ver más',
+    cta_type: cfg.cta_type || 'none',
+    cta_value: cfg.cta_value || '',
+  });
+  const [uploading, setUploading] = useState(false);
+  const photoRef = useRef(null);
+
+  async function handleAddPhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if ((f.photos || []).length >= 4) {
+      alert('Máximo 4 fotos en la sección editorial');
+      return;
+    }
+    setUploading(true);
+    try {
+      const url = await uploadPhoto(file);
+      setF(prev => ({ ...prev, photos: [...(prev.photos || []), url] }));
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+    setUploading(false);
+    if (photoRef.current) photoRef.current.value = '';
+  }
+
+  function removePhoto(i) {
+    setF(prev => ({ ...prev, photos: prev.photos.filter((_, j) => j !== i) }));
+  }
+
+  return (
+    <div>
+      {/* Toggle activar / desactivar */}
+      <div style={{
+        marginBottom: 16, padding: 12, borderRadius: 10,
+        background: f.enabled ? '#D1FAE5' : '#FEE2E2',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: f.enabled ? '#065F46' : '#991B1B' }}>
+              {f.enabled ? '✓ SECCIÓN ACTIVA' : '✕ Sección desactivada'}
+            </div>
+            <div style={{ fontSize: 9, color: f.enabled ? '#065F46' : '#991B1B', marginTop: 2 }}>
+              {f.enabled ? 'Visible al final del catálogo' : 'No se muestra en el catálogo'}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="neu-btn neu-btn-sm"
+            style={{ background: f.enabled ? '#1A1D23' : '#10B981', color: '#FFF' }}
+            onClick={() => setF({ ...f, enabled: !f.enabled })}>
+            {f.enabled ? 'Desactivar' : 'Activar'}
+          </button>
+        </div>
+      </div>
+
+      {/* Frase principal */}
+      <Fld label="Frase principal">
+        <textarea
+          className="neu-input"
+          rows={3}
+          placeholder="Ej: Cada pieza está pensada para hacerte sentir auténtica"
+          value={f.quote_text}
+          onChange={e => setF({ ...f, quote_text: e.target.value })}
+          style={{ resize: 'vertical', minHeight: 60, fontFamily: "'Montserrat', sans-serif" }}
+        />
+        <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 4 }}>
+          Recomendado: 30-80 caracteres. Usa salto de línea con Enter.
+        </div>
+      </Fld>
+
+      {/* 4 fotos */}
+      <div style={{ marginBottom: 16 }}>
+        <label className="label">Fotos pequeñas (máx 4)</label>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 6,
+          marginBottom: 8,
+        }}>
+          {(f.photos || []).map((url, i) => (
+            <div key={i} style={{
+              aspectRatio: '1',
+              borderRadius: 8,
+              overflow: 'hidden',
+              position: 'relative',
+              boxShadow: 'var(--raised-sm)',
+            }}>
+              <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <button
+                type="button"
+                onClick={() => removePhoto(i)}
+                style={{
+                  position: 'absolute', top: 2, right: 2,
+                  width: 20, height: 20, borderRadius: '50%',
+                  background: 'rgba(0,0,0,0.75)', color: '#FFF',
+                  border: 'none', cursor: 'pointer', fontSize: 10,
+                }}>✕</button>
+            </div>
+          ))}
+          {(f.photos || []).length < 4 && (
+            <div
+              onClick={() => !uploading && photoRef.current?.click()}
+              style={{
+                aspectRatio: '1',
+                border: '2px dashed #D1D5DB',
+                borderRadius: 8,
+                cursor: uploading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 18,
+                color: '#9CA3AF',
+                background: '#FAFAFA',
+              }}>{uploading ? '...' : '+'}</div>
+          )}
+        </div>
+        <input ref={photoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAddPhoto} />
+        <div style={{ fontSize: 9, color: '#9CA3AF', textAlign: 'center' }}>
+          {(f.photos || []).length} de 4 fotos
+        </div>
+      </div>
+
+      {/* Texto del botón */}
+      <Fld label="Texto del botón">
+        <input
+          className="neu-input"
+          placeholder="Ej: Ver Primavera"
+          value={f.cta_text}
+          onChange={e => setF({ ...f, cta_text: e.target.value })}
+        />
+      </Fld>
+
+      {/* Tipo de link */}
+      <Fld label="¿A dónde lleva el botón?">
+        <select
+          className="neu-input"
+          value={f.cta_type}
+          onChange={e => setF({ ...f, cta_type: e.target.value, cta_value: '' })}>
+          <option value="none">Sin link (solo decorativo)</option>
+          <option value="url">URL externa (ej: Instagram)</option>
+          <option value="category">Filtrar por categoría del catálogo</option>
+        </select>
+      </Fld>
+
+      {/* Campo según tipo */}
+      {f.cta_type === 'url' && (
+        <Fld label="URL completa">
+          <input
+            className="neu-input"
+            type="url"
+            placeholder="https://instagram.com/splendoracol"
+            value={f.cta_value}
+            onChange={e => setF({ ...f, cta_value: e.target.value })}
+          />
+        </Fld>
+      )}
+
+      {f.cta_type === 'category' && (
+        <Fld label="Categoría">
+          <select
+            className="neu-input"
+            value={f.cta_value}
+            onChange={e => setF({ ...f, cta_value: e.target.value })}>
+            <option value="">Selecciona una categoría</option>
+            {(categories || []).map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 4 }}>
+            Al hacer clic, el catálogo se filtra por esta categoría.
+          </div>
+        </Fld>
+      )}
+
+      {/* Vista previa */}
+      <div style={{
+        marginTop: 18, padding: 14,
+        background: '#FAF8F5', borderRadius: 12,
+        border: '1px solid #E5E7EB',
+      }}>
+        <div style={{ fontSize: 9, color: '#9CA3AF', letterSpacing: 1, marginBottom: 8, textTransform: 'uppercase' }}>Vista previa</div>
+        {f.quote_text ? (
+          <div style={{ textAlign: 'center', padding: '8px 0' }}>
+            <div style={{ fontSize: 32, color: '#C0506F', fontFamily: 'Georgia, serif', lineHeight: 0.5, marginBottom: 12 }}>"</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: 16, lineHeight: 1.4, whiteSpace: 'pre-line' }}>{f.quote_text}</div>
+            {(f.photos || []).length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${f.photos.length}, 1fr)`, gap: 4, marginTop: 12 }}>
+                {f.photos.map((url, i) => (
+                  <div key={i} style={{ aspectRatio: '1', borderRadius: 3, overflow: 'hidden' }}>
+                    <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </div>
+                ))}
+              </div>
+            )}
+            {f.cta_text && f.cta_type !== 'none' && (
+              <div style={{ marginTop: 12, fontSize: 11, fontWeight: 700, textDecoration: 'underline', color: '#1A1D23' }}>
+                {f.cta_text} →
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ fontSize: 11, color: '#9CA3AF', textAlign: 'center', padding: 16 }}>
+            Llena la frase para ver la vista previa
+          </div>
+        )}
+      </div>
+
+      <button
+        type="button"
+        className="neu-btn neu-btn-accent"
+        style={{ width: '100%', marginTop: 16, padding: 12 }}
+        onClick={() => onSave(f)}>
+        💾 Guardar sección editorial
+      </button>
     </div>
   );
 }

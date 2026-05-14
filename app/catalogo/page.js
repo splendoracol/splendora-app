@@ -808,6 +808,7 @@ export default function CatalogoPage() {
   const [showCart, setShowCart] = useState(false);
   const [categories, setCategories] = useState(CATEGORIES_FALLBACK);
   const [checkoutProduct, setCheckoutProduct] = useState(null);
+  const [editorialCfg, setEditorialCfg] = useState(null);
   // Preferencia de columnas en móvil (2, 3, o 4). Se guarda en localStorage.
   const [mobileColumns, setMobileColumns] = useState(2);
   useEffect(() => {
@@ -825,14 +826,16 @@ export default function CatalogoPage() {
 
   useEffect(() => {
     (async () => {
-      const [{ data: p }, { data: c }, { data: cats }] = await Promise.all([
+      const [{ data: p }, { data: c }, { data: cats }, { data: ed }] = await Promise.all([
         supabase.from('products').select('*').gt('stock', 0).or('archived.is.null,archived.eq.false').order('created_at', { ascending: false }),
         supabase.from('catalog_config').select('*').eq('id', 1).single(),
         supabase.from('categories').select('name').order('name'),
+        supabase.from('editorial_quote').select('*').eq('id', 1).maybeSingle(),
       ]);
       setProducts(p || []);
       setCfg(c || {});
       if (cats && cats.length > 0) setCategories(cats.map(x => x.name));
+      if (ed) setEditorialCfg(ed);
       setLoading(false);
 
       // Si llega ?code=SPL-XX-0000 en la URL, abrir ese producto automáticamente
@@ -1264,6 +1267,107 @@ export default function CatalogoPage() {
           </>
         )}
       </div>
+
+      {/* ═══ SECCIÓN EDITORIAL (Quote) ═══ */}
+      {editorialCfg && editorialCfg.enabled && (editorialCfg.quote_text || (editorialCfg.photos && editorialCfg.photos.length > 0)) && (
+        <div style={{
+          background: '#FAF8F5',
+          padding: '60px 24px 50px',
+          textAlign: 'center',
+          marginTop: 24,
+        }}>
+          {/* Comillas decorativas */}
+          <div style={{
+            fontFamily: 'Georgia, "Playfair Display", serif',
+            fontSize: 60,
+            color: '#C0506F',
+            lineHeight: 0.5,
+            marginBottom: 24,
+          }}>"</div>
+
+          {/* Frase */}
+          {editorialCfg.quote_text && (
+            <div style={{
+              fontFamily: 'Georgia, "Playfair Display", serif',
+              fontSize: 22,
+              fontWeight: 500,
+              fontStyle: 'italic',
+              lineHeight: 1.4,
+              color: '#1A1D23',
+              marginBottom: 28,
+              whiteSpace: 'pre-line',
+              maxWidth: 480,
+              marginLeft: 'auto',
+              marginRight: 'auto',
+            }}>{editorialCfg.quote_text}</div>
+          )}
+
+          {/* Fotos pequeñas (1 a 4) */}
+          {editorialCfg.photos && editorialCfg.photos.length > 0 && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${editorialCfg.photos.length}, 1fr)`,
+              gap: 6,
+              maxWidth: 480,
+              margin: '24px auto',
+            }}>
+              {editorialCfg.photos.map((url, i) => (
+                <div key={i} style={{ aspectRatio: '1', borderRadius: 4, overflow: 'hidden', position: 'relative' }}>
+                  <Image src={url} alt="" fill sizes="(max-width: 768px) 25vw, 120px" style={{ objectFit: 'cover' }} quality={70} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* CTA */}
+          {editorialCfg.cta_text && editorialCfg.cta_type !== 'none' && editorialCfg.cta_value && (
+            <div style={{ marginTop: 16 }}>
+              {editorialCfg.cta_type === 'url' ? (
+                <a
+                  href={editorialCfg.cta_value}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-block',
+                    color: '#1A1D23',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 2,
+                    textTransform: 'uppercase',
+                    borderBottom: '1.5px solid #1A1D23',
+                    paddingBottom: 2,
+                    textDecoration: 'none',
+                    fontFamily: "'Montserrat', sans-serif",
+                  }}>{editorialCfg.cta_text} →</a>
+              ) : editorialCfg.cta_type === 'category' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilter(editorialCfg.cta_value);
+                    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+                  }}
+                  style={{
+                    display: 'inline-block',
+                    color: '#1A1D23',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 2,
+                    textTransform: 'uppercase',
+                    borderBottom: '1.5px solid #1A1D23',
+                    paddingBottom: 2,
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottomWidth: 1.5,
+                    borderBottomStyle: 'solid',
+                    borderBottomColor: '#1A1D23',
+                    cursor: 'pointer',
+                    fontFamily: "'Montserrat', sans-serif",
+                  }}>{editorialCfg.cta_text} →</button>
+              ) : null}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* FLOATING CART BUTTON */}
       {cart.length > 0 && !showCart && (
