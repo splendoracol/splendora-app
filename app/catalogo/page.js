@@ -148,11 +148,9 @@ function PhotoNav({ photos, big }) {
     touchStartX.current = 0; touchEndX.current = 0;
   };
 
-  // big = vista modal (ratio 3/4 vertical, ideal para ropa)
-  // !big = card grid (180px alto fijo, como antes)
-  const photoStyle = big
-    ? { position: 'relative', width: '100%', aspectRatio: '3/4' }
-    : { position: 'relative', width: '100%', height: 180 };
+  // Tanto en cards como en modal usar aspect ratio 3/4 (más natural para ropa)
+  // big solo cambia tamaños de flechas/contador, no la proporción de la foto
+  const photoStyle = { position: 'relative', width: '100%', aspectRatio: '3/4' };
 
   return (
     <div style={{ width: '100%' }}>
@@ -1077,7 +1075,6 @@ export default function CatalogoPage() {
                 ? (p.variants.items || []).reduce((s, v) => s + (Number(v.stock) || 0), 0)
                 : (Number(p.stock) || 0);
               const isOutOfStock = totalStock <= 0;
-              const isLowStock = !isOutOfStock && totalStock <= 2;
 
               // Determinar qué badge mostrar (1 sola a la vez, en este orden de prioridad)
               let badge = null;
@@ -1087,8 +1084,6 @@ export default function CatalogoPage() {
                 badge = { label: `-${p.discount}%`, bg: '#C0506F', color: '#FFF' };
               } else if (p.is_new) {
                 badge = { label: 'NUEVO', bg: '#1A1D23', color: '#FFF' };
-              } else if (isLowStock) {
-                badge = { label: 'ÚLTIMAS', bg: '#D97706', color: '#FFF' };
               }
 
               return (
