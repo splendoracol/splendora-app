@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { supabase } from '../../lib/supabase';
 
@@ -133,27 +133,71 @@ function isCombinationAvailable(product, size, color) {
 
 function PhotoNav({ photos, big }) {
   const [idx, setIdx] = useState(0);
+  // Touch swipe state
+  const touchStartX = useRef(0);
+  const touchEndX = useRef(0);
+
   if (!photos || photos.length === 0) return <span style={{ fontSize: big ? 60 : 44, color: '#D1D3D6' }}>+</span>;
+
+  const onTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+  const onTouchMove = (e) => { touchEndX.current = e.touches[0].clientX; };
+  const onTouchEnd = () => {
+    const diff = touchStartX.current - touchEndX.current;
+    if (Math.abs(diff) < 50) return;
+    if (diff > 0) setIdx(idx === photos.length - 1 ? 0 : idx + 1);
+    else setIdx(idx === 0 ? photos.length - 1 : idx - 1);
+    touchStartX.current = 0; touchEndX.current = 0;
+  };
+
   return (
-    <div style={{ position: 'relative', width: '100%', height: big ? 320 : 180 }}>
-      <Image
-        src={photos[idx]}
-        alt=""
-        fill
-        sizes={big ? '(max-width: 600px) 100vw, 400px' : '(max-width: 600px) 50vw, 200px'}
-        style={{ objectFit: 'cover', borderRadius: big ? 14 : 12 }}
-        quality={80}
-      />
-      {photos.length > 1 && (
-        <>
-          <button onClick={e => { e.stopPropagation(); setIdx(idx === 0 ? photos.length - 1 : idx - 1); }}
-            style={{ position: 'absolute', left: 6, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.45)', color: '#FFF', border: 'none', borderRadius: '50%', width: big ? 32 : 24, height: big ? 32 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>‹</button>
-          <button onClick={e => { e.stopPropagation(); setIdx(idx === photos.length - 1 ? 0 : idx + 1); }}
-            style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.45)', color: '#FFF', border: 'none', borderRadius: '50%', width: big ? 32 : 24, height: big ? 32 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>›</button>
-          <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 5, zIndex: 2 }}>
-            {photos.map((_, i) => <div key={i} style={{ width: big ? 8 : 6, height: big ? 8 : 6, borderRadius: '50%', background: i === idx ? '#FFF' : 'rgba(255,255,255,0.5)', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />)}
-          </div>
-        </>
+    <div style={{ width: '100%' }}>
+      {/* Foto principal */}
+      <div
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{ position: 'relative', width: '100%', height: big ? 320 : 180 }}>
+        <Image
+          src={photos[idx]}
+          alt=""
+          fill
+          sizes={big ? '(max-width: 600px) 100vw, 400px' : '(max-width: 600px) 50vw, 200px'}
+          style={{ objectFit: 'cover', borderRadius: big ? 14 : 12 }}
+          quality={80}
+        />
+        {photos.length > 1 && (
+          <>
+            <button onClick={e => { e.stopPropagation(); setIdx(idx === 0 ? photos.length - 1 : idx - 1); }}
+              style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.92)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: big ? 36 : 24, height: big ? 36 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontWeight: 600 }}>‹</button>
+            <button onClick={e => { e.stopPropagation(); setIdx(idx === photos.length - 1 ? 0 : idx + 1); }}
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255,255,255,0.92)', color: '#1A1D23', border: 'none', borderRadius: '50%', width: big ? 36 : 24, height: big ? 36 : 24, cursor: 'pointer', fontSize: big ? 16 : 12, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontWeight: 600 }}>›</button>
+            {/* Contador foto X / N */}
+            <div style={{ position: 'absolute', bottom: 10, right: 10, background: 'rgba(26, 29, 35, 0.75)', color: '#FFF', padding: big ? '4px 10px' : '2px 7px', borderRadius: 100, fontSize: big ? 10 : 9, fontWeight: 700, letterSpacing: 0.5, zIndex: 2 }}>
+              {idx + 1} / {photos.length}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Thumbnails (solo en modal grande) */}
+      {big && photos.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', paddingBottom: 4 }}>
+          {photos.map((url, i) => (
+            <div
+              key={i}
+              onClick={(e) => { e.stopPropagation(); setIdx(i); }}
+              style={{
+                width: 56, height: 56, borderRadius: 6,
+                flexShrink: 0, cursor: 'pointer', overflow: 'hidden',
+                position: 'relative',
+                border: i === idx ? '2px solid #1A1D23' : '2px solid transparent',
+                opacity: i === idx ? 1 : 0.65,
+                transition: 'all 0.15s',
+              }}>
+              <Image src={url} alt="" fill sizes="56px" style={{ objectFit: 'cover' }} quality={60} />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

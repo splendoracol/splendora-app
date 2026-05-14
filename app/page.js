@@ -2285,8 +2285,12 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
     cost_product: initial.cost_product, cost_bag: initial.cost_bag,
     cost_shipping: initial.cost_shipping, price: initial.price, stock: initial.stock,
     description: initial.description, photo_url: initial.photo_url,
-    photo_url_2: initial.photo_url_2 || '',
-    extra_photos: initial.extra_photos || [],
+    photo_url_2: '', // legacy: se migra a extra_photos al cargar
+    extra_photos: [
+      // Migración silenciosa: photo_url_2 viejo entra primero al array
+      ...(initial.photo_url_2 ? [initial.photo_url_2] : []),
+      ...(initial.extra_photos || []),
+    ],
     discount: initial.discount || 0, hide_price: initial.hide_price || false,
     variants: initial.variants || null,
   } : {
@@ -2384,72 +2388,162 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
 
   return (
     <div>
-      {/* PHOTO UPLOADS */}
+      {/* PHOTO UPLOADS — Grid de 5 slots estilo Shopify */}
       <div style={{ marginBottom: 16 }}>
-        <label className="label">Fotos del producto</label>
-        <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-          {/* Photo 1 */}
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 9, color: '#6B7280', marginBottom: 4, textAlign: 'center', fontWeight: 600 }}>📷 Principal</div>
-            <div onClick={() => ref1.current?.click()} style={{
-              width: '100%', height: 90, borderRadius: 12, cursor: 'pointer', overflow: 'hidden',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: f.photo_url ? 'var(--raised-sm)' : 'var(--pressed)',
-            }}>
-              {f.photo_url
-                ? <img src={f.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <div style={{ textAlign: 'center', color: '#9CA3AF', fontSize: 10 }}>{uploading ? '...' : '+ Foto 1'}</div>
-              }
-            </div>
-            <input ref={ref1} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleUpload('photo_url', e)} />
-            {f.photo_url && <button className="neu-btn neu-btn-sm" style={{ width: '100%', marginTop: 4, fontSize: 9 }} onClick={() => setF({ ...f, photo_url: '' })}>Quitar</button>}
-          </div>
+        <label className="label">Fotos del producto (máx 5)</label>
 
-          {/* Photo 2 */}
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 9, color: '#6B7280', marginBottom: 4, textAlign: 'center', fontWeight: 600 }}>📷 Secundaria</div>
-            <div onClick={() => ref2.current?.click()} style={{
-              width: '100%', height: 90, borderRadius: 12, cursor: 'pointer', overflow: 'hidden',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: f.photo_url_2 ? 'var(--raised-sm)' : 'var(--pressed)',
-            }}>
-              {f.photo_url_2
-                ? <img src={f.photo_url_2} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <div style={{ textAlign: 'center', color: '#9CA3AF', fontSize: 10 }}>{uploading ? '...' : '+ Foto 2'}</div>
-              }
-            </div>
-            <input ref={ref2} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleUpload('photo_url_2', e)} />
-            {f.photo_url_2 && <button className="neu-btn neu-btn-sm" style={{ width: '100%', marginTop: 4, fontSize: 9 }} onClick={() => setF({ ...f, photo_url_2: '' })}>Quitar</button>}
-          </div>
-        </div>
+        {(() => {
+          // Combinar todas las fotos en un solo array: [photo_url, ...extra_photos]
+          // photo_url_2 (legacy) ya se migró al cargar el form
+          const allPhotos = [
+            ...(f.photo_url ? [f.photo_url] : []),
+            ...(f.extra_photos || []),
+          ];
+          const maxPhotos = 5;
+          const emptySlots = Math.max(0, maxPhotos - allPhotos.length);
 
-        {/* Extra photos */}
-        {f.extra_photos.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-            {f.extra_photos.map((url, i) => (
-              <div key={i} style={{ position: 'relative', width: 70, height: 70 }}>
-                <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 10, boxShadow: 'var(--raised-sm)' }} />
-                <button onClick={() => setF(prev => ({ ...prev, extra_photos: prev.extra_photos.filter((_, j) => j !== i) }))}
-                  style={{ position: 'absolute', top: -4, right: -4, background: '#C0504E', color: '#FFF', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+          // Setear todas las fotos desde un array
+          function setAllPhotos(arr) {
+            const clean = arr.filter(Boolean).slice(0, maxPhotos);
+            setF(prev => ({
+              ...prev,
+              photo_url: clean[0] || '',
+              extra_photos: clean.slice(1),
+              photo_url_2: '', // limpiar legacy
+            }));
+          }
+
+          function removePhotoAt(i) {
+            const next = allPhotos.filter((_, j) => j !== i);
+            setAllPhotos(next);
+          }
+
+          function makeMain(i) {
+            if (i === 0) return;
+            const next = [...allPhotos];
+            const [chosen] = next.splice(i, 1);
+            next.unshift(chosen);
+            setAllPhotos(next);
+          }
+
+          async function handleAddPhoto(e) {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            if (allPhotos.length >= maxPhotos) {
+              alert(`Máximo ${maxPhotos} fotos por producto`);
+              return;
+            }
+            setUploading(true);
+            try {
+              const url = await uploadPhoto(file);
+              setAllPhotos([...allPhotos, url]);
+            } catch (err) {
+              alert('Error al subir foto: ' + err.message);
+            }
+            setUploading(false);
+            if (refExtra.current) refExtra.current.value = '';
+          }
+
+          return (
+            <>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))',
+                gap: 8,
+                marginBottom: 8,
+              }}>
+                {/* Slots con foto */}
+                {allPhotos.map((url, i) => (
+                  <div key={i} style={{
+                    aspectRatio: '1',
+                    borderRadius: 10,
+                    overflow: 'hidden',
+                    position: 'relative',
+                    boxShadow: 'var(--raised-sm)',
+                  }}>
+                    <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+
+                    {/* Badge PRINCIPAL en la primera */}
+                    {i === 0 && (
+                      <span style={{
+                        position: 'absolute', top: 4, left: 4,
+                        background: '#1A1D23', color: '#FFF',
+                        fontSize: 7, fontWeight: 800,
+                        padding: '2px 6px', borderRadius: 3,
+                        letterSpacing: 0.5,
+                      }}>PRINCIPAL</span>
+                    )}
+
+                    {/* Botón borrar */}
+                    <button
+                      type="button"
+                      onClick={() => removePhotoAt(i)}
+                      title="Borrar foto"
+                      style={{
+                        position: 'absolute', top: 4, right: 4,
+                        width: 22, height: 22, borderRadius: '50%',
+                        background: 'rgba(0,0,0,0.75)', color: '#FFF',
+                        border: 'none', cursor: 'pointer',
+                        fontSize: 11, display: 'flex',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>✕</button>
+
+                    {/* Botón "Hacer principal" si no es la primera */}
+                    {i !== 0 && (
+                      <button
+                        type="button"
+                        onClick={() => makeMain(i)}
+                        title="Marcar como foto principal"
+                        style={{
+                          position: 'absolute', bottom: 4, left: 4, right: 4,
+                          background: 'rgba(255,255,255,0.92)', color: '#1A1D23',
+                          border: 'none', borderRadius: 4,
+                          padding: '3px 6px', fontSize: 9, fontWeight: 700,
+                          cursor: 'pointer',
+                          fontFamily: "'Montserrat', sans-serif",
+                        }}>↑ Principal</button>
+                    )}
+                  </div>
+                ))}
+
+                {/* Slot "+ Agregar" si quedan espacios */}
+                {emptySlots > 0 && (
+                  <div
+                    onClick={() => !uploading && refExtra.current?.click()}
+                    style={{
+                      aspectRatio: '1',
+                      border: '2px dashed #D1D5DB',
+                      borderRadius: 10,
+                      background: '#FAFAFA',
+                      cursor: uploading ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#9CA3AF',
+                      fontSize: 10,
+                      transition: 'all 0.15s',
+                    }}>
+                    <span style={{ fontSize: 24, fontWeight: 300, lineHeight: 1 }}>+</span>
+                    <span style={{ marginTop: 4 }}>{uploading ? 'Subiendo...' : 'Agregar'}</span>
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-        )}
 
-        <input ref={refExtra} type="file" accept="image/*" style={{ display: 'none' }} onChange={async (e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          setUploading(true);
-          try {
-            const url = await uploadPhoto(file);
-            setF(prev => ({ ...prev, extra_photos: [...prev.extra_photos, url] }));
-          } catch (err) { alert('Error: ' + err.message); }
-          setUploading(false);
-          if (refExtra.current) refExtra.current.value = '';
-        }} />
-        <button type="button" className="neu-btn neu-btn-sm" onClick={() => refExtra.current?.click()} style={{ width: '100%', fontSize: 10 }}>
-          {uploading ? 'Subiendo...' : `📷 + Agregar más fotos (${f.extra_photos.length} extras)`}
-        </button>
+              <input
+                ref={refExtra}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleAddPhoto}
+              />
+
+              <div style={{ fontSize: 9, color: '#9CA3AF', textAlign: 'center', marginTop: 4 }}>
+                {allPhotos.length} de {maxPhotos} fotos · La primera es la principal
+              </div>
+            </>
+          );
+        })()}
       </div>
 
       <div style={{ marginBottom: 16 }}>
