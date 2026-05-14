@@ -1003,6 +1003,28 @@ export default function CatalogoPage() {
     <div style={{ minHeight: '100vh', background: '#F0F2F5', fontFamily: "'Montserrat', sans-serif", color: '#1A1D23', paddingBottom: cart.length > 0 && showCart ? 200 : 0 }}>
       <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
 
+      {/* Estilos globales — hover effect en cards de producto */}
+      <style>{`
+        .splendora-product-card .splendora-card-quickbtn {
+          opacity: 0;
+          transform: translateY(6px);
+          transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+        .splendora-product-card .splendora-card-photo-wrap {
+          transition: transform 0.25s ease, box-shadow 0.25s ease;
+        }
+        @media (hover: hover) {
+          .splendora-product-card:hover .splendora-card-photo-wrap {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 24px rgba(0,0,0,0.08);
+          }
+          .splendora-product-card:hover .splendora-card-quickbtn {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `}</style>
+
       {/* HEADER */}
       <div style={{ background: '#FFF', padding: '20px 20px 14px', textAlign: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
         {logo && <Image src={logo} alt="SPLENDORA.COL" width={50} height={50} style={{ objectFit: 'contain', marginBottom: 6 }} priority />}
@@ -1040,58 +1062,131 @@ export default function CatalogoPage() {
             <div style={{ color: '#9CA3AF' }}>No hay productos disponibles</div>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))', gap: 16 }}>
             {filtered.map(p => {
               const disc = p.discount > 0;
               const fp = disc ? Math.round(p.price * (1 - p.discount / 100)) : p.price;
               const photos = [p.photo_url, p.photo_url_2, ...(p.extra_photos || [])].filter(Boolean);
-              // Tallas y colores disponibles (considera variantes)
               const sizesAvail = getAvailableSizes(p);
               const colorsAvail = getAvailableColors(p);
-              const allSizes = sizesAvail.map(x => x.size);
               const allColors = colorsAvail.map(x => x.color);
               const inCart = cart.find(x => x.id === p.id);
 
-              return (
-                <div key={p.id} onClick={() => setSelected(p)} style={{
-                  background: '#F0F2F5', borderRadius: 16, overflow: 'hidden', cursor: 'pointer',
-                  boxShadow: '5px 5px 10px #D1D3D6, -5px -5px 10px #FFFFFF', position: 'relative',
-                  border: inCart ? '2px solid #25D366' : '2px solid transparent',
-                }}>
-                  {disc && <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, background: '#C0504E', color: '#FFF', fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 6 }}>-{p.discount}%</div>}
-                  {inCart && <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 2, background: '#25D366', color: '#FFF', fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4 }}>🛒</div>}
+              // Stock total (suma de todas las variantes o stock plano)
+              const totalStock = hasVariants(p)
+                ? (p.variants.items || []).reduce((s, v) => s + (Number(v.stock) || 0), 0)
+                : (Number(p.stock) || 0);
+              const isOutOfStock = totalStock <= 0;
+              const isLowStock = !isOutOfStock && totalStock <= 2;
 
-                  <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', margin: 8, borderRadius: 12, boxShadow: 'inset 3px 3px 6px #D1D3D6, inset -3px -3px 6px #FFFFFF' }}>
+              // Determinar qué badge mostrar (1 sola a la vez, en este orden de prioridad)
+              let badge = null;
+              if (isOutOfStock) {
+                badge = { label: 'AGOTADO', bg: '#6B7280', color: '#FFF' };
+              } else if (disc) {
+                badge = { label: `-${p.discount}%`, bg: '#C0506F', color: '#FFF' };
+              } else if (p.is_new) {
+                badge = { label: 'NUEVO', bg: '#1A1D23', color: '#FFF' };
+              } else if (isLowStock) {
+                badge = { label: 'ÚLTIMAS', bg: '#D97706', color: '#FFF' };
+              }
+
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => setSelected(p)}
+                  className="splendora-product-card"
+                  style={{
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    opacity: isOutOfStock ? 0.75 : 1,
+                  }}>
+                  {/* Wrap foto con badge + quick add */}
+                  <div className="splendora-card-photo-wrap" style={{
+                    position: 'relative',
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                    marginBottom: 10,
+                    background: '#FAF8F5',
+                  }}>
+                    {/* Badge superior izquierdo */}
+                    {badge && (
+                      <span style={{
+                        position: 'absolute', top: 8, left: 8, zIndex: 3,
+                        background: badge.bg, color: badge.color,
+                        fontSize: 9, fontWeight: 800, letterSpacing: 1,
+                        padding: '3px 8px', borderRadius: 100,
+                      }}>{badge.label}</span>
+                    )}
+                    {/* Indicador carrito */}
+                    {inCart && !badge && (
+                      <span style={{
+                        position: 'absolute', top: 8, left: 8, zIndex: 3,
+                        background: '#25D366', color: '#FFF',
+                        fontSize: 9, fontWeight: 800,
+                        padding: '3px 8px', borderRadius: 100,
+                      }}>🛒</span>
+                    )}
+
+                    {/* Foto principal */}
                     <PhotoNav photos={photos} />
+
+                    {/* Botón "Ver detalles" — aparece al hover en PC */}
+                    <div className="splendora-card-quickbtn" style={{
+                      position: 'absolute',
+                      bottom: 8, left: 8, right: 8,
+                      padding: '8px 10px',
+                      background: 'rgba(255,255,255,0.95)',
+                      backdropFilter: 'blur(8px)',
+                      WebkitBackdropFilter: 'blur(8px)',
+                      borderRadius: 6,
+                      textAlign: 'center',
+                      fontSize: 10, fontWeight: 700,
+                      letterSpacing: 1,
+                      textTransform: 'uppercase',
+                      color: '#1A1D23',
+                      pointerEvents: 'none',
+                      zIndex: 3,
+                    }}>Ver detalles</div>
                   </div>
 
-                  <div style={{ padding: '8px 14px 14px' }}>
-                    <div style={{ fontSize: 8, color: '#4A6FA5', fontWeight: 700 }}>{p.code}</div>
-                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{p.name}</div>
-                    <div style={{ fontSize: 9, color: '#6B7280' }}>{(p.categories || [p.category]).join(' · ')}</div>
+                  {/* Info debajo */}
+                  <div style={{ padding: '0 2px' }}>
+                    <div style={{ fontSize: 7, color: '#9CA3AF', fontWeight: 700, letterSpacing: 0.5, marginBottom: 2 }}>{p.code}</div>
+                    <div style={{
+                      fontSize: 12, fontWeight: 500, color: '#1A1D23',
+                      lineHeight: 1.3, marginBottom: 4,
+                      overflow: 'hidden', display: '-webkit-box',
+                      WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                    }}>{p.name}</div>
 
-                    {/* Show sizes inline */}
-                    {allSizes.length > 0 && (
-                      <div style={{ fontSize: 9, color: '#6B7280', marginTop: 3 }}>Tallas: {allSizes.join(' · ')}</div>
-                    )}
-
-                    {/* Show colors inline */}
+                    {/* Puntitos de colores */}
                     {allColors.length > 0 && (
-                      <div style={{ fontSize: 9, color: '#6B7280', marginTop: 2 }}>Colores: {allColors.join(' · ')}</div>
+                      <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+                        {allColors.slice(0, 5).map((c, i) => (
+                          <div key={i}
+                            title={c}
+                            style={{
+                              width: 10, height: 10, borderRadius: '50%',
+                              background: getColorHex(c),
+                              border: '1px solid rgba(0,0,0,0.12)',
+                            }} />
+                        ))}
+                        {allColors.length > 5 && (
+                          <span style={{ fontSize: 8, color: '#9CA3AF', marginLeft: 2 }}>+{allColors.length - 5}</span>
+                        )}
+                      </div>
                     )}
 
-                    {/* Description preview */}
-                    {p.description && (
-                      <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.description}</div>
-                    )}
-
+                    {/* Precio */}
                     {!p.hide_price ? (
-                      <div style={{ marginTop: 6 }}>
-                        {disc && <span style={{ fontSize: 10, color: '#9CA3AF', textDecoration: 'line-through', marginRight: 6 }}>{cur(p.price)}</span>}
-                        <div style={{ fontSize: 17, fontWeight: 800, color: disc ? '#C0504E' : '#1A1D23' }}>{cur(fp)}</div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                        <span style={{ fontSize: 14, fontWeight: 800, color: '#1A1D23' }}>{cur(fp)}</span>
+                        {disc && <span style={{ fontSize: 10, color: '#9CA3AF', textDecoration: 'line-through' }}>{cur(p.price)}</span>}
                       </div>
                     ) : (
-                      <div style={{ fontSize: 11, color: '#4A6FA5', fontWeight: 600, marginTop: 6 }}>Consultar precio</div>
+                      <div style={{ fontSize: 11, color: '#4A6FA5', fontWeight: 600 }}>Consultar precio</div>
                     )}
                   </div>
                 </div>

@@ -601,6 +601,7 @@ export default function HomePage() {
       extra_photos: prod.extra_photos || [],
       discount: prod.discount || 0,
       hide_price: prod.hide_price || false,
+      is_new: prod.is_new || false,
       variants: prod.variants || null,
     };
     try {
@@ -2292,11 +2293,12 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
       ...(initial.extra_photos || []),
     ],
     discount: initial.discount || 0, hide_price: initial.hide_price || false,
+    is_new: initial.is_new || false,
     variants: initial.variants || null,
   } : {
     name: '', category: 'Blusas', productCategories: [], size: 'M', sizes: [], color: '', colors: [],
     cost_product: 0, cost_bag: 0, cost_shipping: 0, price: 0, stock: 0,
-    description: '', photo_url: '', photo_url_2: '', extra_photos: [], discount: 0, hide_price: false,
+    description: '', photo_url: '', photo_url_2: '', extra_photos: [], discount: 0, hide_price: false, is_new: false,
     variants: { mode: 'size_color', items: [] }, // Nuevo producto: variantes obligatorias
   });
 
@@ -2869,12 +2871,18 @@ function ProductForm({ initial, onSave, categories, existingProducts = [], editi
       </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <Fld label="Descuento %"><input className="neu-input" type="number" min="0" max="99" value={f.discount} onChange={e => setF({ ...f, discount: Number(e.target.value) })} /></Fld>
-        <Fld label="¿Ocultar precio público?">
+        <Fld label="¿Ocultar precio?">
           <button type="button" className="neu-btn" style={{ width: '100%', ...(f.hide_price ? { background: '#4A6FA5', color: '#FFF' } : {}) }}
             onClick={() => setF({ ...f, hide_price: !f.hide_price })}>
-            {f.hide_price ? 'Sí — Oculto' : 'No — Visible'}
+            {f.hide_price ? 'Sí' : 'No'}
+          </button>
+        </Fld>
+        <Fld label="Marcar NUEVO">
+          <button type="button" className="neu-btn" style={{ width: '100%', ...(f.is_new ? { background: '#1A1D23', color: '#FFF' } : {}) }}
+            onClick={() => setF({ ...f, is_new: !f.is_new })}>
+            {f.is_new ? '⭐ Sí' : 'No'}
           </button>
         </Fld>
       </div>
