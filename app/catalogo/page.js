@@ -1760,6 +1760,153 @@ export default function CatalogoPage() {
         </div>
       )}
 
+      {/* ═══ SECCIÓN GALLERY EDITORIAL (estilo Bo+Tee) ═══ */}
+      {editorialCfg && editorialCfg.gallery_enabled && (editorialCfg.gallery_word || (editorialCfg.gallery_photos && editorialCfg.gallery_photos.length > 0)) && (
+        <div style={{
+          background: '#FFFFFF',
+          marginTop: 50,
+        }}>
+          <div className="gallery-grid" style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 0,
+            minHeight: 480,
+          }}>
+            {/* LADO IZQUIERDO: texto */}
+            <div style={{
+              background: '#EFEAE3',
+              padding: '60px 40px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              minHeight: 480,
+            }}>
+              <div style={{
+                fontFamily: 'Georgia, "Playfair Display", serif',
+                fontSize: 11,
+                color: '#6B5D52',
+                letterSpacing: 2.5,
+                textTransform: 'uppercase',
+              }}>SPLENDORA.COL</div>
+
+              <div style={{ margin: 'auto 0' }}>
+                {editorialCfg.gallery_word && (
+                  <div style={{
+                    fontFamily: 'Georgia, "Playfair Display", serif',
+                    fontStyle: 'italic',
+                    fontSize: 'clamp(48px, 7vw, 96px)',
+                    color: '#1A1D23',
+                    lineHeight: 1,
+                    letterSpacing: '-2px',
+                    fontWeight: 400,
+                  }}>{editorialCfg.gallery_word}</div>
+                )}
+                {editorialCfg.gallery_subtitle && (
+                  <div style={{
+                    fontFamily: 'Georgia, "Playfair Display", serif',
+                    fontSize: 14,
+                    color: '#5F5E5A',
+                    marginTop: 16,
+                    lineHeight: 1.5,
+                    maxWidth: 280,
+                    whiteSpace: 'pre-line',
+                  }}>{editorialCfg.gallery_subtitle}</div>
+                )}
+              </div>
+
+              {editorialCfg.gallery_cta_text && editorialCfg.gallery_cta_type !== 'none' && editorialCfg.gallery_cta_value && (
+                <div>
+                  {editorialCfg.gallery_cta_type === 'url' ? (
+                    <a
+                      href={editorialCfg.gallery_cta_value}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-block',
+                        color: '#1A1D23',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        letterSpacing: 2.5,
+                        textTransform: 'uppercase',
+                        borderBottom: '1.5px solid #1A1D23',
+                        paddingBottom: 4,
+                        textDecoration: 'none',
+                        fontFamily: "'Montserrat', sans-serif",
+                      }}>{editorialCfg.gallery_cta_text} →</a>
+                  ) : editorialCfg.gallery_cta_type === 'category' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFilter(editorialCfg.gallery_cta_value);
+                        try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+                      }}
+                      style={{
+                        display: 'inline-block',
+                        color: '#1A1D23',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        letterSpacing: 2.5,
+                        textTransform: 'uppercase',
+                        background: 'transparent',
+                        border: 'none',
+                        borderBottom: '1.5px solid #1A1D23',
+                        paddingBottom: 4,
+                        cursor: 'pointer',
+                        fontFamily: "'Montserrat', sans-serif",
+                      }}>{editorialCfg.gallery_cta_text} →</button>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            {/* LADO DERECHO: grid de fotos */}
+            <div className="gallery-photos" style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gridTemplateRows: 'repeat(2, 1fr)',
+              gap: 2,
+              minHeight: 480,
+            }}>
+              {(editorialCfg.gallery_photos || []).slice(0, 8).map((url, i) => (
+                <div key={i} style={{
+                  position: 'relative',
+                  overflow: 'hidden',
+                  background: '#F1EFE8',
+                }}>
+                  <Image
+                    src={url}
+                    alt=""
+                    fill
+                    sizes="(max-width: 768px) 50vw, 25vw"
+                    style={{ objectFit: 'cover' }}
+                    quality={75}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <style jsx>{`
+            @media (max-width: 768px) {
+              .gallery-grid {
+                grid-template-columns: 1fr !important;
+                min-height: auto !important;
+              }
+              .gallery-grid > div:first-child {
+                padding: 40px 24px !important;
+                min-height: 320px !important;
+              }
+              .gallery-photos {
+                grid-template-columns: repeat(4, 1fr) !important;
+                grid-template-rows: repeat(2, 1fr) !important;
+                min-height: 240px !important;
+                aspect-ratio: 2 / 1;
+              }
+            }
+          `}</style>
+        </div>
+      )}
+
       {/* FLOATING CART BUTTON */}
       {cart.length > 0 && !showCart && (
         <button onClick={() => setShowCart(true)} style={{

@@ -329,8 +329,9 @@ export default function HomePage() {
   const [expenses, setExpenses] = useState([]);
   const [config, setConfig] = useState({ partner1: 'DahiannaGs', partner2: 'Estelasuarez', split: 50, business_split: 10 });
   const [catCfg, setCatCfg] = useState({ banner_text: '', banner_image: '', banner_active: false, instagram_url: '', whatsapp_number: '', logo_url: '', share_image_url: '' });
-  const [editorialCfg, setEditorialCfg] = useState({ enabled: false, quote_text: '', photos: [], cta_text: 'Ver más', cta_type: 'none', cta_value: '' });
+  const [editorialCfg, setEditorialCfg] = useState({ enabled: false, quote_text: '', photos: [], cta_text: 'Ver más', cta_type: 'none', cta_value: '', gallery_enabled: false, gallery_word: '', gallery_subtitle: '', gallery_cta_text: 'Ver más', gallery_cta_type: 'none', gallery_cta_value: '', gallery_photos: [] });
   const [showEditorial, setShowEditorial] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
   const [showProd, setShowProd] = useState(false);
   const [editProd, setEditProd] = useState(null);
   const [showOrd, setShowOrd] = useState(false);
@@ -709,8 +710,24 @@ export default function HomePage() {
     };
     const { error } = await supabase.from('editorial_quote').update(clean).eq('id', 1);
     if (error) { alert('Error guardando editorial: ' + error.message); return; }
-    setEditorialCfg(ed);
+    setEditorialCfg(prev => ({ ...prev, ...clean }));
     setShowEditorial(false);
+  }
+  async function saveGallery(gl) {
+    const clean = {
+      gallery_enabled: gl.gallery_enabled || false,
+      gallery_word: gl.gallery_word || '',
+      gallery_subtitle: gl.gallery_subtitle || '',
+      gallery_cta_text: gl.gallery_cta_text || 'Ver más',
+      gallery_cta_type: gl.gallery_cta_type || 'none',
+      gallery_cta_value: gl.gallery_cta_value || '',
+      gallery_photos: gl.gallery_photos || [],
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('editorial_quote').update(clean).eq('id', 1);
+    if (error) { alert('Error guardando gallery: ' + error.message); return; }
+    setEditorialCfg(prev => ({ ...prev, ...clean }));
+    setShowGallery(false);
   }
 
   // Monthly filters
@@ -2031,6 +2048,7 @@ export default function HomePage() {
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button className="neu-btn neu-btn-sm" onClick={() => setShowCatCfg(true)}>🎨 Config</button>
                 <button className="neu-btn neu-btn-sm" onClick={() => setShowEditorial(true)}>📝 Editorial</button>
+                <button className="neu-btn neu-btn-sm" onClick={() => setShowGallery(true)}>🖼️ Gallery</button>
                 <a href="/catalogo" target="_blank" className="neu-btn neu-btn-accent neu-btn-sm" style={{ textDecoration: 'none' }}>🌐 Ver público</a>
               </div>
             </div>
@@ -2479,6 +2497,9 @@ export default function HomePage() {
       </Modal>
       <Modal open={showEditorial} onClose={() => setShowEditorial(false)} title="📝 Sección Editorial">
         <EditorialForm cfg={editorialCfg} categories={categories} onSave={saveEditorial} />
+      </Modal>
+      <Modal open={showGallery} onClose={() => setShowGallery(false)} title="🖼️ Sección Gallery" wide>
+        <GalleryForm cfg={editorialCfg} categories={categories} onSave={saveGallery} />
       </Modal>
       <Modal open={showBulk} onClose={() => setShowBulk(false)} title="📦 Carga masiva de productos" wide>
         <BulkForm categories={categories} existingProducts={products} onSave={async (items) => {
@@ -4446,6 +4467,253 @@ function EditorialForm({ cfg, categories, onSave }) {
         style={{ width: '100%', marginTop: 16, padding: 12 }}
         onClick={() => onSave(f)}>
         💾 Guardar sección editorial
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FORM: GalleryForm — Configura la sección Gallery editorial
+// (estilo Bo+Tee) del final del catálogo. Layout asimétrico
+// con palabra grande + 8 fotos.
+// ═══════════════════════════════════════════════════════════════
+function GalleryForm({ cfg, categories, onSave }) {
+  const [f, setF] = useState({
+    gallery_enabled: cfg.gallery_enabled || false,
+    gallery_word: cfg.gallery_word || '',
+    gallery_subtitle: cfg.gallery_subtitle || '',
+    gallery_photos: cfg.gallery_photos || [],
+    gallery_cta_text: cfg.gallery_cta_text || 'Ver más',
+    gallery_cta_type: cfg.gallery_cta_type || 'none',
+    gallery_cta_value: cfg.gallery_cta_value || '',
+  });
+  const [uploading, setUploading] = useState(false);
+  const photoRef = useRef(null);
+
+  async function handleAddPhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if ((f.gallery_photos || []).length >= 8) {
+      alert('Máximo 8 fotos en la sección gallery');
+      return;
+    }
+    setUploading(true);
+    try {
+      const url = await uploadPhoto(file);
+      setF(prev => ({ ...prev, gallery_photos: [...(prev.gallery_photos || []), url] }));
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+    setUploading(false);
+    if (photoRef.current) photoRef.current.value = '';
+  }
+
+  function removePhoto(i) {
+    setF(prev => ({ ...prev, gallery_photos: prev.gallery_photos.filter((_, j) => j !== i) }));
+  }
+
+  return (
+    <div>
+      <div style={{
+        marginBottom: 16, padding: 12, borderRadius: 10,
+        background: f.gallery_enabled ? '#D1FAE5' : '#FEE2E2',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: f.gallery_enabled ? '#065F46' : '#991B1B' }}>
+              {f.gallery_enabled ? '✓ SECCIÓN ACTIVA' : '✕ Sección desactivada'}
+            </div>
+            <div style={{ fontSize: 9, color: f.gallery_enabled ? '#065F46' : '#991B1B', marginTop: 2 }}>
+              {f.gallery_enabled ? 'Visible al final del catálogo (después de la editorial)' : 'No se muestra en el catálogo'}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="neu-btn neu-btn-sm"
+            style={{ background: f.gallery_enabled ? '#1A1D23' : '#10B981', color: '#FFF' }}
+            onClick={() => setF({ ...f, gallery_enabled: !f.gallery_enabled })}>
+            {f.gallery_enabled ? 'Desactivar' : 'Activar'}
+          </button>
+        </div>
+      </div>
+
+      <Fld label="Palabra grande (titular)">
+        <input
+          className="neu-input"
+          placeholder="Ej: Bloom, Glow, Move, Power"
+          value={f.gallery_word}
+          onChange={e => setF({ ...f, gallery_word: e.target.value })}
+          style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: 18 }}
+        />
+        <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 4 }}>
+          1 palabra corta y aspiracional. Se ve en serif italic gigante.
+        </div>
+      </Fld>
+
+      <Fld label="Frase debajo de la palabra (opcional)">
+        <textarea
+          className="neu-input"
+          rows={2}
+          placeholder="Ej: Nueva colección. Pensada para moverse."
+          value={f.gallery_subtitle}
+          onChange={e => setF({ ...f, gallery_subtitle: e.target.value })}
+          style={{ resize: 'vertical', minHeight: 50, fontFamily: 'Georgia, serif' }}
+        />
+        <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 4 }}>
+          Recomendado: 5-15 palabras. Opcional, puede quedar vacío.
+        </div>
+      </Fld>
+
+      <div style={{ marginBottom: 16 }}>
+        <label className="label">Fotos editoriales (máx 8)</label>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 6,
+          marginBottom: 8,
+        }}>
+          {(f.gallery_photos || []).map((url, i) => (
+            <div key={i} style={{
+              aspectRatio: '3/4',
+              borderRadius: 6,
+              overflow: 'hidden',
+              position: 'relative',
+              boxShadow: 'var(--raised-sm)',
+            }}>
+              <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <button
+                type="button"
+                onClick={() => removePhoto(i)}
+                style={{
+                  position: 'absolute', top: 2, right: 2,
+                  width: 20, height: 20, borderRadius: '50%',
+                  background: 'rgba(0,0,0,0.75)', color: '#FFF',
+                  border: 'none', cursor: 'pointer', fontSize: 10,
+                }}>✕</button>
+              <div style={{
+                position: 'absolute', bottom: 2, left: 2,
+                fontSize: 8, fontWeight: 700, color: '#FFF',
+                background: 'rgba(0,0,0,0.5)', padding: '1px 5px', borderRadius: 3,
+              }}>{i + 1}</div>
+            </div>
+          ))}
+          {(f.gallery_photos || []).length < 8 && (
+            <div
+              onClick={() => !uploading && photoRef.current?.click()}
+              style={{
+                aspectRatio: '3/4',
+                border: '2px dashed #D1D5DB',
+                borderRadius: 6,
+                cursor: uploading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 22,
+                color: '#9CA3AF',
+                background: '#FAFAFA',
+              }}>{uploading ? '...' : '+'}</div>
+          )}
+        </div>
+        <input ref={photoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAddPhoto} />
+        <div style={{ fontSize: 9, color: '#9CA3AF', textAlign: 'center' }}>
+          {(f.gallery_photos || []).length} de 8 fotos · Se muestran en grid 4 × 2
+        </div>
+      </div>
+
+      <Fld label="Texto del botón">
+        <input
+          className="neu-input"
+          placeholder="Ej: Shop conjuntos"
+          value={f.gallery_cta_text}
+          onChange={e => setF({ ...f, gallery_cta_text: e.target.value })}
+        />
+      </Fld>
+
+      <Fld label="¿A dónde lleva el botón?">
+        <select
+          className="neu-input"
+          value={f.gallery_cta_type}
+          onChange={e => setF({ ...f, gallery_cta_type: e.target.value, gallery_cta_value: '' })}>
+          <option value="none">Sin link (solo decorativo)</option>
+          <option value="category">Filtrar por categoría del catálogo</option>
+          <option value="url">URL externa (ej: Instagram)</option>
+        </select>
+      </Fld>
+
+      {f.gallery_cta_type === 'category' && (
+        <Fld label="Categoría">
+          <select
+            className="neu-input"
+            value={f.gallery_cta_value}
+            onChange={e => setF({ ...f, gallery_cta_value: e.target.value })}>
+            <option value="">Selecciona una categoría</option>
+            {(categories || []).map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 4 }}>
+            Al hacer clic, el catálogo se filtra por esta categoría.
+          </div>
+        </Fld>
+      )}
+
+      {f.gallery_cta_type === 'url' && (
+        <Fld label="URL completa">
+          <input
+            className="neu-input"
+            type="url"
+            placeholder="https://instagram.com/splendora.col"
+            value={f.gallery_cta_value}
+            onChange={e => setF({ ...f, gallery_cta_value: e.target.value })}
+          />
+        </Fld>
+      )}
+
+      <div style={{
+        marginTop: 18, padding: 0,
+        border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden',
+      }}>
+        <div style={{ fontSize: 9, color: '#9CA3AF', letterSpacing: 1, padding: '10px 14px 6px', textTransform: 'uppercase', background: '#FAFAFA' }}>Vista previa</div>
+        {f.gallery_word || (f.gallery_photos || []).length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0, minHeight: 200 }}>
+            <div style={{ background: '#EFEAE3', padding: 18, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div style={{ fontFamily: 'Georgia, serif', fontSize: 9, color: '#6B5D52', letterSpacing: 1.5, textTransform: 'uppercase' }}>Splendora.col</div>
+              <div style={{ margin: '8px 0' }}>
+                {f.gallery_word && <div style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: 36, color: '#1A1D23', lineHeight: 1, letterSpacing: '-1px' }}>{f.gallery_word}</div>}
+                {f.gallery_subtitle && <div style={{ fontFamily: 'Georgia, serif', fontSize: 10, color: '#5F5E5A', marginTop: 8, lineHeight: 1.4, whiteSpace: 'pre-line' }}>{f.gallery_subtitle}</div>}
+              </div>
+              {f.gallery_cta_text && f.gallery_cta_type !== 'none' && (
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, borderBottom: '1.5px solid #1A1D23', display: 'inline-block', paddingBottom: 2, alignSelf: 'flex-start', color: '#1A1D23' }}>{f.gallery_cta_text} →</div>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 1, background: '#F1EFE8' }}>
+              {Array.from({ length: 8 }).map((_, i) => {
+                const url = (f.gallery_photos || [])[i];
+                return (
+                  <div key={i} style={{ position: 'relative', background: '#F1EFE8' }}>
+                    {url ? (
+                      <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, color: '#D1D5DB' }}>+</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 11, color: '#9CA3AF', textAlign: 'center', padding: 24 }}>
+            Llena la palabra grande o sube fotos para ver la vista previa
+          </div>
+        )}
+      </div>
+
+      <button
+        type="button"
+        className="neu-btn neu-btn-accent"
+        style={{ width: '100%', marginTop: 16, padding: 12 }}
+        onClick={() => onSave(f)}>
+        💾 Guardar sección gallery
       </button>
     </div>
   );
