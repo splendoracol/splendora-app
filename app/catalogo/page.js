@@ -1364,6 +1364,13 @@ export default function CatalogoPage() {
             transform: translateY(0);
           }
         }
+        /* Tablet: 3 columnas */
+        @media (max-width: 1023px) and (min-width: 768px) {
+          .splendora-products-grid {
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 18px !important;
+          }
+        }
         /* En móvil: aplicar columnas según preferencia del usuario */
         @media (max-width: 767px) {
           .splendora-columns-selector {
@@ -1458,8 +1465,8 @@ export default function CatalogoPage() {
               className={`splendora-products-grid splendora-grid-cols-${mobileColumns}`}
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))',
-                gap: 16,
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 24,
               }}>
             {filtered.map(p => {
               const disc = p.discount > 0;
