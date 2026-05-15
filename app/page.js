@@ -4676,8 +4676,8 @@ function GalleryForm({ cfg, categories, onSave }) {
         <div style={{ fontSize: 9, color: '#9CA3AF', letterSpacing: 1, padding: '10px 14px 6px', textTransform: 'uppercase', background: '#FAFAFA' }}>Vista previa</div>
         {f.gallery_word || (f.gallery_photos || []).length > 0 ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0, minHeight: 200 }}>
-            <div style={{ background: '#EFEAE3', padding: 18, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-              <div style={{ fontFamily: 'Georgia, serif', fontSize: 9, color: '#6B5D52', letterSpacing: 1.5, textTransform: 'uppercase' }}>Splendora.col</div>
+            <div style={{ background: '#FAF8F5', padding: 18, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div style={{ fontFamily: "'Montserrat', sans-serif", fontSize: 9, fontWeight: 800, color: '#1A1D23', letterSpacing: 2, textTransform: 'uppercase' }}>Splendora.col</div>
               <div style={{ margin: '8px 0' }}>
                 {f.gallery_word && <div style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', fontSize: 36, color: '#1A1D23', lineHeight: 1, letterSpacing: '-1px' }}>{f.gallery_word}</div>}
                 {f.gallery_subtitle && <div style={{ fontFamily: 'Georgia, serif', fontSize: 10, color: '#5F5E5A', marginTop: 8, lineHeight: 1.4, whiteSpace: 'pre-line' }}>{f.gallery_subtitle}</div>}
@@ -4686,11 +4686,11 @@ function GalleryForm({ cfg, categories, onSave }) {
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, borderBottom: '1.5px solid #1A1D23', display: 'inline-block', paddingBottom: 2, alignSelf: 'flex-start', color: '#1A1D23' }}>{f.gallery_cta_text} →</div>
               )}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 1, background: '#F1EFE8' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(2, 1fr)', gap: 1, background: '#FFFFFF' }}>
               {Array.from({ length: 8 }).map((_, i) => {
                 const url = (f.gallery_photos || [])[i];
                 return (
-                  <div key={i} style={{ position: 'relative', background: '#F1EFE8' }}>
+                  <div key={i} style={{ position: 'relative', background: '#F7F5F0' }}>
                     {url ? (
                       <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : (

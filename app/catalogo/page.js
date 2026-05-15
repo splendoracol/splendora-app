@@ -1774,7 +1774,7 @@ export default function CatalogoPage() {
           }}>
             {/* LADO IZQUIERDO: texto */}
             <div style={{
-              background: '#EFEAE3',
+              background: '#FAF8F5',
               padding: '60px 40px',
               display: 'flex',
               flexDirection: 'column',
@@ -1782,10 +1782,11 @@ export default function CatalogoPage() {
               minHeight: 480,
             }}>
               <div style={{
-                fontFamily: 'Georgia, "Playfair Display", serif',
-                fontSize: 11,
-                color: '#6B5D52',
-                letterSpacing: 2.5,
+                fontFamily: "'Montserrat', sans-serif",
+                fontSize: 12,
+                fontWeight: 800,
+                color: '#1A1D23',
+                letterSpacing: 3,
                 textTransform: 'uppercase',
               }}>SPLENDORA.COL</div>
 
